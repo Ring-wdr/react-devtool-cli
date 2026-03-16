@@ -82,6 +82,9 @@ node bin/rdt.js session close --session smoke-open-escalated
   - after waiting for later React updates, `node inspect <nodeId> --snapshot <same-id>` still returned `tick = 1`
 - `node highlight <nodeId> --session app --snapshot <snapshotId>` worked with snapshot-aware lookup.
 - `source reveal <nodeId> --session app --snapshot <snapshotId>` executed successfully; for `App` it returned `null`, consistent with missing `_debugSource` rather than a snapshot lookup failure.
+- `node pick` was validated through a CDP-attached session:
+  - clicking `button.counter` returned a snapshot-scoped inspect result for the `button` host node
+  - the returned `snapshotId` and `nodeId` were then reused successfully with `node inspect`, `node highlight`, and `source reveal`
 - `react-devtools-core` and `react-debug-tools` were added as `devDependencies` for official reference during future agent maintenance.
 
 ## Known Issue From Real-App Run
@@ -130,7 +133,6 @@ node bin/rdt.js session close --session smoke-open-escalated
   - agents should persist the returned `snapshotId` and pass it to all later node/source commands
   - latest-snapshot fallback exists for convenience, not as the preferred deterministic path
 - Remaining questions:
-  - whether `pick` needs more prominent user-facing examples
   - whether snapshot cache size should stay fixed at `5` or become configurable
 
 ## Important Constraints
@@ -169,12 +171,12 @@ Concrete tasks:
    - `tree get`
    - persist `snapshotId`
    - `node search|inspect|highlight|source reveal` with `--snapshot`
-3. Validate `node pick` output shape and decide whether it needs a README example.
+3. Decide whether `node pick` needs a more prominent README example now that the behavior is verified.
 4. Verify snapshot eviction behavior remains acceptable with cache size `5`.
 5. Re-run the same React validation after the doc / UX cleanup:
    - `session open` returns `reactDetected: true`
    - `tree get` returns credible roots, nodes, and a snapshot identifier
-   - `node search`, `node inspect`, `node highlight`, and `source reveal` work on IDs from that same snapshot
+   - `node search`, `node inspect`, `node highlight`, `source reveal`, and `node pick` work on IDs from that same snapshot
    - profiler still captures real commits
 6. Revisit whether official DevTools types or references would help stabilize node identity modeling.
 

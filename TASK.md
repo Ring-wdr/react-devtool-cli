@@ -38,6 +38,10 @@ Implemented:
   - `tree get` returns `snapshotId`
   - `node inspect|search|highlight` and `source reveal` accept `--snapshot <id>`
   - runtime keeps a small in-memory snapshot cache
+- dev-only React DevTools references:
+  - `react-devtools-core`
+  - `react-debug-tools`
+  - added for agent reference and data-model comparison, not runtime integration
 
 Implemented files to inspect first:
 
@@ -78,6 +82,7 @@ node bin/rdt.js session close --session smoke-open-escalated
   - after waiting for later React updates, `node inspect <nodeId> --snapshot <same-id>` still returned `tick = 1`
 - `node highlight <nodeId> --session app --snapshot <snapshotId>` worked with snapshot-aware lookup.
 - `source reveal <nodeId> --session app --snapshot <snapshotId>` executed successfully; for `App` it returned `null`, consistent with missing `_debugSource` rather than a snapshot lookup failure.
+- `react-devtools-core` and `react-debug-tools` were added as `devDependencies` for official reference during future agent maintenance.
 
 ## Known Issue From Real-App Run
 
@@ -138,6 +143,10 @@ node bin/rdt.js session close --session smoke-open-escalated
 ## Design Consideration
 
 - Evaluate adding `react-devtools-core` and related DevTools packages as `devDependencies`, not immediate runtime dependencies.
+- Current decision:
+  - `react-devtools-core` and `react-debug-tools` are now installed as `devDependencies`
+  - they are reference-only for agent maintenance and model comparison
+  - do not import them into the runtime path unless a later tradeoff review justifies that coupling
 - Purpose:
   - improve type stability while exploring DevTools data structures
   - compare the current custom runtime against official DevTools concepts and event flow

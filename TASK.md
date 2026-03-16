@@ -64,6 +64,18 @@ node bin/rdt.js session close --session smoke-open-escalated
 - Current React inspection uses a custom runtime script, not `react-devtools-core` yet.
 - Session state is stored under `.react-devtool-cli/sessions` in the repo by default.
 
+## Design Consideration
+
+- Evaluate adding `react-devtools-core` and related DevTools packages as `devDependencies`, not immediate runtime dependencies.
+- Purpose:
+  - improve type stability while exploring DevTools data structures
+  - compare the current custom runtime against official DevTools concepts and event flow
+  - decide whether later integration should stay custom, adopt official types only, or move closer to official runtime pieces
+- Decision rule:
+  - prefer development-time references and type usage first
+  - avoid runtime deep imports unless the stability tradeoff is clearly acceptable
+- This should be revisited during the first real React app validation pass.
+
 ## Next Priority
 
 Primary next milestone:

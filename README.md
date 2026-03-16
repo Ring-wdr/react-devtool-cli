@@ -75,6 +75,23 @@ Snapshot recovery:
 - `node pick` captures a snapshot-scoped result and returns the same shape as `node inspect`.
 - Agents should persist the returned `snapshotId` and use it for any follow-up commands.
 
+## Response Semantics
+
+- `tag` is the numeric React fiber tag.
+- `tagName` is the human-readable label derived from that fiber tag.
+- `ownerStack` is a lightweight owner chain for CLI output, not a full stack frame model.
+- `hooks` is a simplified serialized view of hook state from the inspected fiber.
+- `context` is a serialized view of current context dependencies for the inspected node.
+- `source` projects `_debugSource` when available; `null` is expected in many dev builds.
+- `dom` is the first host element summary used for CLI highlight and DOM-oriented inspection.
+- Profiler summary fields are commit-oriented CLI metrics, not the full DevTools profiler session schema.
+
+## Concept Alignment
+
+- Current runtime design note: [docs/devtools-concept-mapping.md](/Users/kimmanjoong/private-project/rdt-cli/docs/devtools-concept-mapping.md)
+- `react-devtools-core` is the primary reference package for concept comparison.
+- `react-debug-tools` is installed as a dev-only reference but is currently a low-value implementation reference in this repo state.
+
 ## Output formats
 
 - Default command output is `JSON`
@@ -94,5 +111,6 @@ Snapshot recovery:
 - `session attach` requires a Chromium instance with CDP enabled and has lower fidelity than Playwright protocol transport
 - Session status reports `transport`, `browserName`, `endpoint`, `persistent`, and `capabilities`
 - Snapshot-aware node workflows are preferred for agents; use the `snapshotId` returned by `tree get` for deterministic follow-up calls
+- Runtime semantics are documented to align with DevTools concepts where practical, while keeping the CLI snapshot model custom
 - `profiler export` intentionally rejects `YAML`; use `profiler summary` for compact summaries
 - Global CLI distribution is preferred; Playwright does not need to be pinned as a repo dependency

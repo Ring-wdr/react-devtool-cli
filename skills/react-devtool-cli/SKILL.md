@@ -79,6 +79,7 @@ rdt session close --session app
 - Treat `tree get` as the start of a lookup cycle and persist its `snapshotId`.
 - Prefer explicit `--snapshot <id>` on follow-up node and source commands.
 - If `snapshot-expired` is returned, collect a fresh tree and do not reuse old node IDs.
+- Use [docs/devtools-concept-mapping.md](/Users/kimmanjoong/private-project/rdt-cli/docs/devtools-concept-mapping.md) when you need to compare current payload semantics to official DevTools concepts.
 - Use `YAML` only for compact summaries.
 - Do not request `YAML` for raw profiler export.
 - Prefer `open` over `connect`, and prefer `connect` over `attach`.

@@ -42,6 +42,9 @@ Implemented:
   - `react-devtools-core`
   - `react-debug-tools`
   - added for agent reference and data-model comparison, not runtime integration
+- DevTools concept mapping note:
+  - `docs/devtools-concept-mapping.md` maps current `rdt` payloads and runtime concepts to `react-devtools-core`
+  - use it as the source of truth for terminology alignment before changing runtime behavior
 
 Implemented files to inspect first:
 
@@ -86,6 +89,7 @@ node bin/rdt.js session close --session smoke-open-escalated
   - clicking `button.counter` returned a snapshot-scoped inspect result for the `button` host node
   - the returned `snapshotId` and `nodeId` were then reused successfully with `node inspect`, `node highlight`, and `source reveal`
 - `react-devtools-core` and `react-debug-tools` were added as `devDependencies` for official reference during future agent maintenance.
+- `docs/devtools-concept-mapping.md` was added to document how current `rdt` concepts map to public DevTools concepts and where the CLI intentionally diverges.
 
 ## Known Issue From Real-App Run
 
@@ -136,6 +140,10 @@ node bin/rdt.js session close --session smoke-open-escalated
   - agents should treat `tree get` as the start of a lookup cycle
   - agents should persist the returned `snapshotId` and pass it to all later node/source commands
   - latest-snapshot fallback exists for convenience, not as the preferred deterministic path
+- Terminology alignment status:
+  - response field names are kept stable for now
+  - concept and field semantics are documented in `README.md` and `docs/devtools-concept-mapping.md`
+  - future naming changes should only happen if the current names create real maintenance confusion
 
 ## Important Constraints
 
@@ -164,7 +172,7 @@ node bin/rdt.js session close --session smoke-open-escalated
 
 Primary next milestone:
 
-- re-run end-to-end validation against the documented agent snapshot workflow and decide whether any snapshot UX should still change
+- decide whether any remaining field names or payload shapes need behavioral changes after the terminology-alignment documentation pass
 
 Concrete tasks:
 
@@ -173,13 +181,14 @@ Concrete tasks:
    - `tree get`
    - persist `snapshotId`
    - `node search|inspect|highlight|source reveal` with `--snapshot`
-3. Decide whether `node pick` needs a more prominent README example now that the behavior is verified.
-4. Re-run the same React validation after the doc / UX cleanup:
+3. Review current response field names against `docs/devtools-concept-mapping.md` and decide whether any rename is worth the compatibility cost.
+4. Decide whether `node pick` needs a more prominent README example now that the behavior is verified.
+5. Re-run the same React validation after the doc / UX cleanup:
    - `session open` returns `reactDetected: true`
    - `tree get` returns credible roots, nodes, and a snapshot identifier
    - `node search`, `node inspect`, `node highlight`, `source reveal`, and `node pick` work on IDs from that same snapshot
    - profiler still captures real commits
-5. Revisit whether official DevTools types or references would help stabilize node identity modeling.
+6. Revisit whether official DevTools types or references would help stabilize node identity modeling.
 
 ## Suggested Execution Order
 

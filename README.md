@@ -80,6 +80,52 @@ Snapshot recovery:
 - `node pick` captures a snapshot-scoped result and returns the same shape as `node inspect`.
 - Agents should persist the returned `snapshotId` and use it for any follow-up commands.
 
+## Practical Workflows
+
+Performance triage flow:
+
+```bash
+rdt session open --url http://localhost:3000 --session app
+rdt tree get --session app
+# => save snapshotId from output as SNAPSHOT_A
+rdt node search SearchResults --session app --snapshot SNAPSHOT_A
+rdt node inspect <nodeId> --session app --snapshot SNAPSHOT_A
+rdt profiler start --session app
+# reproduce the slow interaction in the browser
+rdt profiler stop --session app
+rdt profiler summary --session app
+rdt profiler export --session app --compress
+rdt tree get --session app
+# => save new snapshotId as SNAPSHOT_B
+rdt node search SearchResults --session app --snapshot SNAPSHOT_B
+rdt node inspect <nodeId> --session app --snapshot SNAPSHOT_B
+```
+
+Use this flow when an agent needs to answer:
+
+- whether a user action produced more commits than expected
+- whether a suspected component changed `props`, `state`, `hooks`, or `context`
+- whether the update appears localized or broad across the tree
+
+Profiler interpretation:
+
+- current profiler output is commit-oriented, not component-duration-oriented
+- use `commitCount`, commit timestamps, and `nodeCount` to detect suspicious update patterns
+- use follow-up `tree get` and `node inspect` calls to infer likely causes from changed state, props, hooks, and context
+
+`node pick` flow:
+
+```bash
+rdt node pick --session app
+# click the element in Chromium
+# => save returned snapshotId and id
+rdt node inspect <nodeId> --session app --snapshot <snapshotId>
+rdt node highlight <nodeId> --session app --snapshot <snapshotId>
+rdt source reveal <nodeId> --session app --snapshot <snapshotId>
+```
+
+Use `node pick` when the agent knows the visible element but not the component name to search for.
+
 ## Response Semantics
 
 - `tag` is the numeric React fiber tag.

@@ -42,6 +42,7 @@ It is a maintenance aid for agents and contributors. It is not a commitment to r
 | `context` | `src/runtime-script.js` | Context dependencies / inspected context values | Derived from fiber dependencies, serialized for CLI use. |
 | `source reveal` | `src/server.js` + `src/runtime-script.js` | View source / inspect source location | Depends on `_debugSource`; may legitimately return `null`. |
 | `profiler` summary/export | `src/runtime-script.js` + `src/cli.js` | Profiler commit data | `rdt` keeps commit-oriented summaries and NDJSON export rather than full DevTools frontend state. |
+| `session doctor` | `src/server.js` + `src/runtime-script.js` | No direct public equivalent | CLI-specific preflight that reports trust boundaries, runtime readiness, Playwright resolution diagnostics, and helper import targets. |
 
 ## Intentional Divergences
 
@@ -49,6 +50,7 @@ It is a maintenance aid for agents and contributors. It is not a commitment to r
 - `rdt` exposes serialized JSON snapshots, not a live DevTools backend/frontend protocol.
 - `inspect` returns a stable snapshot-time payload rather than a live-updating inspected element model.
 - `highlight` and `pick` are implemented as page-side DOM event flows for CLI automation, not frontend UI affordances.
+- `doctor` is CLI-specific and intentionally exposes environment limitations that DevTools frontends normally hide.
 
 ## Field Semantics
 
@@ -73,6 +75,7 @@ It is a maintenance aid for agents and contributors. It is not a commitment to r
 
 - `commitCount`, `maxNodeCount`, `minNodeCount`, `averageNodeCount`, `roots` are summary-level CLI metrics.
 - Exported NDJSON is commit-oriented event data, not a full DevTools profiler session model.
+- `measuresComponentDuration` and `tracksChangedFibers` are explicit negative-capability flags to prevent over-interpretation.
 
 ## Implementation Guidance
 

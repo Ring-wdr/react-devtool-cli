@@ -119,6 +119,13 @@ async function handleSessionCommand(command, options) {
     return;
   }
 
+  if (command === "doctor") {
+    ensure(options.session, "Missing required option --session", { code: "missing-session" });
+    const response = await requestSession(options.session, "session.doctor");
+    writeStdout(response.result, resolveFormat(options));
+    return;
+  }
+
   if (command === "close") {
     ensure(options.session, "Missing required option --session", { code: "missing-session" });
     const response = await requestSession(options.session, "session.close");
@@ -312,12 +319,14 @@ Recommended flow:
   3. Use rdt session attach only for Chromium CDP compatibility
   4. Use rdt tree/node/profiler commands for structured output
   5. For agent workflows, capture snapshotId from tree get and pass it to later node/source commands
+  6. Use rdt doctor before profiling if helper scripts or Playwright resolution look suspicious
 
 Usage:
   rdt session open --url <url> [--browser chromium|firefox|webkit] [--channel <name>] [--device <name>] [--storage-state <path>] [--user-data-dir <path>] [--timeout <ms>] [--headless=false] [--session <name>]
   rdt session connect --ws-endpoint <url> [--browser chromium|firefox|webkit] [--target-url <substring>] [--timeout <ms>] [--session <name>]
   rdt session attach --cdp-url <url> [--target-url <substring>] [--timeout <ms>] [--session <name>]
   rdt session status --session <name>
+  rdt session doctor --session <name> [--format json|yaml|pretty]
   rdt session close --session <name>
   rdt tree get --session <name> [--format json|yaml|pretty]
   rdt node inspect <id> --session <name> [--snapshot <id>]
@@ -335,6 +344,10 @@ Snapshot behavior:
   - node ids are scoped to that snapshot
   - if --snapshot is omitted, commands use the latest collected snapshot
   - if an explicit snapshot has expired, commands fail with snapshot-expired
+
+Doctor behavior:
+  - reports React/runtime readiness plus Playwright resolution diagnostics
+  - warns when rdt can launch Playwright but standalone helper scripts may still fail to import it
 `);
 }
 

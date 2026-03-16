@@ -56,6 +56,21 @@ run("parseArgv preserves snapshot options for node commands", () => {
   assert.equal(parsed.options.snapshot, "snapshot-3");
 });
 
+run("parseArgv preserves session doctor options", () => {
+  const parsed = parseArgv([
+    "session",
+    "doctor",
+    "--session",
+    "app",
+    "--format",
+    "pretty",
+  ]);
+
+  assert.deepEqual(parsed.positionals, ["session", "doctor"]);
+  assert.equal(parsed.options.session, "app");
+  assert.equal(parsed.options.format, "pretty");
+});
+
 run("formatOutput renders JSON", () => {
   const output = formatOutput({ ok: true }, "json");
   assert.match(output, /"ok": true/);

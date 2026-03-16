@@ -1,4 +1,7 @@
 import http from "node:http";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import process from "node:process";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -17,6 +20,14 @@ import {
 import { ensureSessionDir, removeSessionFiles, writeMetadata, writeRuntime } from "./session-store.js";
 
 const require = createRequire(import.meta.url);
+
+function resolveLocalPackage(packageName) {
+  try {
+    return require.resolve(packageName, { paths: [process.cwd()] });
+  } catch {
+    return null;
+  }
+}
 
 function resolveGlobalPackage(packageName) {
   const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
@@ -44,46 +55,143 @@ function resolveGlobalPackage(packageName) {
 async function loadPlaywright() {
   const envPath = process.env.RDT_PLAYWRIGHT_PATH;
   const candidates = [
-    () => import("playwright"),
-    () => import("playwright-core"),
+    () => {
+      const resolved = resolveLocalPackage("playwright");
+      if (!resolved) {
+        throw new Error("skip");
+      }
+      return import(pathToFileURL(resolved).href).then((loaded) => ({
+        loaded,
+        source: "local-playwright",
+        resolvedPath: resolved,
+      }));
+    },
+    () => {
+      const resolved = resolveLocalPackage("playwright-core");
+      if (!resolved) {
+        throw new Error("skip");
+      }
+      return import(pathToFileURL(resolved).href).then((loaded) => ({
+        loaded,
+        source: "local-playwright-core",
+        resolvedPath: resolved,
+      }));
+    },
     () => {
       if (!envPath) {
         throw new Error("skip");
       }
-      return import(pathToFileURL(envPath).href);
+      return import(pathToFileURL(envPath).href).then((loaded) => ({
+        loaded,
+        source: "env-path",
+        resolvedPath: envPath,
+      }));
     },
     () => {
       const resolved = resolveGlobalPackage("playwright");
       if (!resolved) {
         throw new Error("skip");
       }
-      return import(pathToFileURL(resolved).href);
+      return import(pathToFileURL(resolved).href).then((loaded) => ({
+        loaded,
+        source: "global-playwright",
+        resolvedPath: resolved,
+      }));
     },
     () => {
       const resolved = resolveGlobalPackage("playwright-core");
       if (!resolved) {
         throw new Error("skip");
       }
-      return import(pathToFileURL(resolved).href);
+      return import(pathToFileURL(resolved).href).then((loaded) => ({
+        loaded,
+        source: "global-playwright-core",
+        resolvedPath: resolved,
+      }));
     },
   ];
 
   for (const candidate of candidates) {
     try {
-      const loaded = await candidate();
-      if (loaded?.chromium) {
-        return loaded;
+      const resolved = await candidate();
+      if (resolved?.loaded?.chromium) {
+        return resolved;
       }
     } catch {}
   }
 
   try {
-    return await import("playwright");
+    const resolved = resolveLocalPackage("playwright");
+    const loaded = await import("playwright");
+    return {
+      loaded,
+      source: "local-playwright",
+      resolvedPath: resolved || "playwright",
+    };
   } catch (error) {
     throw new CliError(
       'Playwright runtime was not found. Install `playwright` locally, install it globally, or set `RDT_PLAYWRIGHT_PATH` to a resolvable module entry.',
       { code: "missing-playwright" },
     );
+  }
+}
+
+function buildHelperImportTarget(resolvedPath) {
+  if (!resolvedPath || resolvedPath === "playwright" || resolvedPath === "playwright-core") {
+    return null;
+  }
+
+  try {
+    return pathToFileURL(resolvedPath).href;
+  } catch {
+    return null;
+  }
+}
+
+function checkExternalNodePlaywrightImport() {
+  const scriptPath = path.join(os.tmpdir(), `rdt-playwright-check-${randomUUID()}.mjs`);
+  const scriptContents = `import("playwright").then(() => {
+  process.stdout.write(JSON.stringify({ ok: true }) + "\\n");
+}).catch((error) => {
+  process.stderr.write(JSON.stringify({
+    ok: false,
+    code: error?.code || null,
+    message: error?.message || String(error),
+  }) + "\\n");
+  process.exit(1);
+});\n`;
+
+  try {
+    fs.writeFileSync(scriptPath, scriptContents, "utf8");
+    const result = spawnSync(process.execPath, [scriptPath], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+
+    if (result.status === 0) {
+      return {
+        ok: true,
+        status: "ok",
+        mode: "tmp-script",
+      };
+    }
+
+    let details = null;
+    try {
+      details = JSON.parse(result.stderr.trim().split("\n").pop() || "{}");
+    } catch {}
+
+    return {
+      ok: false,
+      status: details?.code === "ERR_MODULE_NOT_FOUND" ? "missing-package" : "resolution-mismatch",
+      mode: "tmp-script",
+      code: details?.code || null,
+      message: details?.message || result.stderr.trim() || result.stdout.trim() || null,
+    };
+  } finally {
+    try {
+      fs.unlinkSync(scriptPath);
+    } catch {}
   }
 }
 
@@ -186,6 +294,10 @@ class SessionServer {
     this.context = null;
     this.page = null;
     this.server = null;
+    this.playwrightResolution = {
+      source: "unresolved",
+      resolvedPath: null,
+    };
   }
 
   async start() {
@@ -231,7 +343,12 @@ class SessionServer {
   }
 
   async initializeBrowser() {
-    const playwright = await loadPlaywright();
+    const playwrightRuntime = await loadPlaywright();
+    const playwright = playwrightRuntime.loaded;
+    this.playwrightResolution = {
+      source: playwrightRuntime.source,
+      resolvedPath: playwrightRuntime.resolvedPath,
+    };
     const runtimeScript = createRuntimeScript();
     const contextOptions = resolveContextOptions(playwright, this.options);
 
@@ -371,6 +488,71 @@ class SessionServer {
     };
   }
 
+  async doctor() {
+    const runtimeDoctor = unwrapRuntimeResult(await this.page.evaluate(() => window.__RDT_CLI_RUNTIME__.doctor()));
+    const externalImport = checkExternalNodePlaywrightImport();
+    const runtimeWarnings = runtimeDoctor.runtimeWarnings.slice();
+    let helperScriptWarning = null;
+    const helperImportTarget = buildHelperImportTarget(this.playwrightResolution.resolvedPath);
+    const helperImportExample = helperImportTarget
+      ? `const playwright = await import(${JSON.stringify(helperImportTarget)});`
+      : null;
+
+    if (!externalImport.ok) {
+      helperScriptWarning = helperImportTarget
+        ? "rdt can resolve Playwright for its own session, but standalone Node helper scripts may fail to import `playwright`. Use helperImportTarget from this doctor response, or set RDT_PLAYWRIGHT_PATH to a resolvable module entry."
+        : "rdt can resolve Playwright for its own session, but standalone Node helper scripts may fail to import `playwright`. Run helper code from the repo, or set RDT_PLAYWRIGHT_PATH to a resolvable module entry.";
+      runtimeWarnings.push(helperScriptWarning);
+    }
+
+    const checks = {
+      ...runtimeDoctor.checks,
+      playwrightRuntime: {
+        status: this.playwrightResolution.source === "unresolved" ? "failed" : "ok",
+        source: this.playwrightResolution.source,
+        resolvedPath: this.playwrightResolution.resolvedPath,
+      },
+      externalNodeImport: {
+        status: externalImport.status,
+        canImportPlaywright: externalImport.ok,
+        mode: externalImport.mode,
+        code: externalImport.code || null,
+        message: externalImport.message || null,
+      },
+    };
+
+    const statuses = Object.values(checks).map((check) => check.status);
+    let status = "ok";
+    if (statuses.includes("failed")) {
+      status = "failed";
+    } else if (statuses.includes("partial") || statuses.includes("degraded") || runtimeWarnings.length) {
+      status = "partial";
+    }
+
+    return {
+      sessionName: this.sessionName,
+      transport: this.transport,
+      browserName: this.browserName,
+      target: this.page.url(),
+      status,
+      observationLevel: "observed",
+      limitations: runtimeDoctor.limitations.concat([
+        "external helper scripts may not resolve Playwright the same way as rdt",
+      ]),
+      runtimeWarnings,
+      checks,
+      rdtPlaywrightResolution: {
+        source: this.playwrightResolution.source,
+        resolvedPath: this.playwrightResolution.resolvedPath,
+      },
+      helperImportTarget,
+      helperImportExample,
+      externalNodeCanImportPlaywright: externalImport.ok,
+      externalNodeImportCheck: externalImport.status,
+      helperScriptWarning,
+    };
+  }
+
   async ensureReactDetected() {
     const tree = await this.peekTree();
     if (!tree.reactDetected) {
@@ -417,6 +599,8 @@ class SessionServer {
     switch (action) {
       case "session.status":
         return this.status();
+      case "session.doctor":
+        return this.doctor();
       case "session.close":
         return this.close();
       case "tree.get":

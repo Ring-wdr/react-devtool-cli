@@ -24,6 +24,23 @@ export function createRuntimeScript() {
     overlay: null,
   };
 
+  const commonLimitations = {
+    snapshot: [
+      "snapshot ids are snapshot-scoped only",
+      "node identity is not stable across React commits",
+    ],
+    inspect: [
+      "hooks are simplified serialized state derived from memoizedState",
+      "ownerStack is a lightweight owner chain, not a full component stack",
+      "source depends on _debugSource and may legitimately be unavailable",
+    ],
+    profiler: [
+      "nodeCount is live tree size at commit, not changed fiber count",
+      "component durations are not measured",
+      "commit data does not prove which components rerendered",
+    ],
+  };
+
   function createRuntimeError(code, message, details) {
     return {
       __rdtError: true,
@@ -272,6 +289,11 @@ export function createRuntimeScript() {
   function buildNodeDetails(fiber, node) {
     return {
       snapshotId: null,
+      snapshotScoped: true,
+      identityStableAcrossCommits: false,
+      observationLevel: "observed",
+      limitations: commonLimitations.snapshot.concat(commonLimitations.inspect),
+      runtimeWarnings: node.source ? [] : ["_debugSource unavailable for this node in the current build"],
       id: node.id,
       displayName: node.displayName,
       tag: node.tag,
@@ -336,6 +358,11 @@ export function createRuntimeScript() {
   function serializeSnapshot(snapshot) {
     return {
       snapshotId: snapshot.snapshotId,
+      snapshotScoped: true,
+      identityStableAcrossCommits: false,
+      observationLevel: "observed",
+      limitations: commonLimitations.snapshot.slice(),
+      runtimeWarnings: [],
       generatedAt: snapshot.generatedAt,
       reactDetected: snapshot.reactDetected,
       roots: snapshot.roots,
@@ -375,6 +402,11 @@ export function createRuntimeScript() {
     if (!liveTree.reactDetected) {
       return {
         snapshotId: null,
+        snapshotScoped: true,
+        identityStableAcrossCommits: false,
+        observationLevel: "observed",
+        limitations: commonLimitations.snapshot.slice(),
+        runtimeWarnings: ["No React fiber roots were detected on the current page"],
         generatedAt: liveTree.generatedAt,
         reactDetected: false,
         roots: [],
@@ -391,6 +423,11 @@ export function createRuntimeScript() {
     const liveTree = collectLiveTree();
     return {
       snapshotId: null,
+      snapshotScoped: true,
+      identityStableAcrossCommits: false,
+      observationLevel: "observed",
+      limitations: commonLimitations.snapshot.slice(),
+      runtimeWarnings: liveTree.reactDetected ? [] : ["No React fiber roots were detected on the current page"],
       generatedAt: liveTree.generatedAt,
       reactDetected: liveTree.reactDetected,
       roots: liveTree.roots,
@@ -556,6 +593,9 @@ export function createRuntimeScript() {
     const totalNodeCount = nodeCounts.reduce((sum, count) => sum + count, 0);
 
     return {
+      observationLevel: "observed",
+      limitations: commonLimitations.profiler.slice(),
+      runtimeWarnings: state.profiler.active ? [] : ["Profiler data is commit-oriented only; use inspect/tree snapshots for follow-up analysis"],
       profileId: state.profiler.profileId,
       active: state.profiler.active,
       startedAt: state.profiler.startedAt,
@@ -565,6 +605,92 @@ export function createRuntimeScript() {
       minNodeCount: nodeCounts.length ? Math.min(...nodeCounts) : 0,
       averageNodeCount: nodeCounts.length ? totalNodeCount / nodeCounts.length : 0,
       roots: [...new Set(commitEvents.map((event) => event.rootId))],
+      measuresComponentDuration: false,
+      tracksChangedFibers: false,
+      nodeCountMeaning: "live-tree-size-at-commit",
+      safeConclusions: [
+        "a commit occurred",
+        "live tree size at commit was captured",
+        "commit frequency changed during the profiling window",
+      ],
+      unsafeConclusions: [
+        "all matching nodes rerendered",
+        "a specific component took N ms",
+        "a prop was unnecessary without source confirmation",
+      ],
+    };
+  }
+
+  function doctor() {
+    const tree = peekTree();
+    const checks = {
+      reactRuntime: {
+        status: tree.reactDetected ? "ok" : "failed",
+        reactDetected: tree.reactDetected,
+        rootCount: tree.roots.length,
+        nodeCount: tree.nodes.length,
+      },
+      snapshotCollection: {
+        status: "failed",
+        snapshotId: null,
+      },
+      inspect: {
+        status: "failed",
+        nodeId: null,
+      },
+      profiler: {
+        status: "partial",
+        measuresComponentDuration: false,
+        tracksChangedFibers: false,
+      },
+      sourceReveal: {
+        status: "failed",
+        available: false,
+      },
+    };
+    const runtimeWarnings = [];
+
+    if (!tree.reactDetected) {
+      runtimeWarnings.push("No React fiber roots were detected on the current page");
+      return {
+        status: "failed",
+        observationLevel: "observed",
+        limitations: commonLimitations.snapshot.concat(commonLimitations.inspect, commonLimitations.profiler),
+        runtimeWarnings,
+        checks,
+      };
+    }
+
+    const snapshot = collectTree();
+    checks.snapshotCollection = {
+      status: snapshot.snapshotId ? "ok" : "failed",
+      snapshotId: snapshot.snapshotId || null,
+    };
+
+    const firstNode = snapshot.nodes[0] || null;
+    if (firstNode) {
+      const details = inspectNode(firstNode.id, snapshot.snapshotId);
+      checks.inspect = {
+        status: details ? "ok" : "failed",
+        nodeId: firstNode.id,
+      };
+      checks.sourceReveal = {
+        status: details?.source ? "ok" : "partial",
+        available: Boolean(details?.source),
+      };
+      if (!details?.source) {
+        runtimeWarnings.push("_debugSource is unavailable for the inspected node in the current build");
+      }
+    }
+
+    runtimeWarnings.push("Profiler is commit-oriented only; it does not track changed fibers or component durations");
+
+    return {
+      status: runtimeWarnings.length ? "partial" : "ok",
+      observationLevel: "observed",
+      limitations: commonLimitations.snapshot.concat(commonLimitations.inspect, commonLimitations.profiler),
+      runtimeWarnings,
+      checks,
     };
   }
 
@@ -647,6 +773,7 @@ export function createRuntimeScript() {
       };
     },
     profilerSummary: summarizeProfiler,
+    doctor,
   };
 })();`;
 }

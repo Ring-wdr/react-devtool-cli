@@ -36,6 +36,7 @@ Published package notes:
 rdt session open --url http://localhost:3000 --browser chromium --session demo
 rdt session connect --ws-endpoint ws://127.0.0.1:3000/ --target-url localhost:3000 --session remote
 rdt session attach --cdp-url http://127.0.0.1:9222 --target-url localhost:3000 --session cdp
+rdt session doctor --session demo
 rdt tree get --session demo
 rdt node search App --session demo --snapshot <snapshotId>
 rdt node inspect <nodeId> --session demo --snapshot <snapshotId>
@@ -56,6 +57,14 @@ rdt profiler export --session demo --compress
 - If `--snapshot` is omitted, commands fall back to the latest collected snapshot.
 - If an explicitly requested snapshot has been evicted from the runtime cache, commands fail with `snapshot-expired`.
 - Responses from snapshot-aware commands include the `snapshotId` that was actually used, so agents can pin follow-up calls to it.
+
+## Doctor
+
+- `rdt session doctor --session <name>` reports runtime readiness and trust boundaries before a deeper investigation.
+- It checks React detection, snapshot/inspect readiness, profiler capability, `_debugSource` availability, and Playwright resolution.
+- It also warns when `rdt` itself can resolve Playwright but standalone helper scripts may still fail to `import('playwright')`.
+- When that mismatch happens, `doctor` returns `helperImportTarget` and `helperImportExample` so agents can import the same Playwright entry that `rdt` resolved without reading internal package files.
+- Use it before profiling if browser interaction helpers or ad hoc Node scripts are involved.
 
 Example deterministic flow:
 
@@ -88,16 +97,17 @@ Performance triage flow:
 rdt session open --url http://localhost:3000 --session app
 rdt tree get --session app
 # => save snapshotId from output as SNAPSHOT_A
-rdt node search SearchResults --session app --snapshot SNAPSHOT_A
+rdt node search SlowSearchDemo --session app --snapshot SNAPSHOT_A
+rdt node search ResultList --session app --snapshot SNAPSHOT_A
 rdt node inspect <nodeId> --session app --snapshot SNAPSHOT_A
 rdt profiler start --session app
-# reproduce the slow interaction in the browser
+# in test-app, type one character into "Type to filter products"
 rdt profiler stop --session app
 rdt profiler summary --session app
 rdt profiler export --session app --compress
 rdt tree get --session app
 # => save new snapshotId as SNAPSHOT_B
-rdt node search SearchResults --session app --snapshot SNAPSHOT_B
+rdt node search SlowSearchDemo --session app --snapshot SNAPSHOT_B
 rdt node inspect <nodeId> --session app --snapshot SNAPSHOT_B
 ```
 
@@ -106,6 +116,13 @@ Use this flow when an agent needs to answer:
 - whether a user action produced more commits than expected
 - whether a suspected component changed `props`, `state`, `hooks`, or `context`
 - whether the update appears localized or broad across the tree
+
+`test-app` includes an intentional bottleneck for this flow:
+
+- `SlowSearchDemo` owns the filter state
+- `ResultList` renders a large list
+- `ResultRow` recomputes per-row derived data and receives fresh props on each input change
+- typing into the filter causes broad re-rendering across the visible list
 
 Profiler interpretation:
 
@@ -128,6 +145,14 @@ Use `node pick` when the agent knows the visible element but not the component n
 
 ## Response Semantics
 
+- Most structured responses now include:
+  - `observationLevel`
+  - `limitations`
+  - `runtimeWarnings`
+- Read them literally:
+  - `observationLevel: "observed"` means the payload is directly observed by `rdt`
+  - `limitations` describes what the payload does not prove
+  - `runtimeWarnings` highlights environment or runtime conditions that can mislead follow-up analysis
 - `tag` is the numeric React fiber tag.
 - `tagName` is the human-readable label derived from that fiber tag.
 - `ownerStack` is a lightweight owner chain for CLI output, not a full stack frame model.
@@ -136,6 +161,10 @@ Use `node pick` when the agent knows the visible element but not the component n
 - `source` projects `_debugSource` when available; `null` is expected in many dev builds.
 - `dom` is the first host element summary used for CLI highlight and DOM-oriented inspection.
 - Profiler summary fields are commit-oriented CLI metrics, not the full DevTools profiler session schema.
+- `profiler summary` and exported summaries explicitly report:
+  - `measuresComponentDuration: false`
+  - `tracksChangedFibers: false`
+  - `nodeCountMeaning: "live-tree-size-at-commit"`
 
 ## Concept Alignment
 

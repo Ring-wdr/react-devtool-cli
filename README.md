@@ -17,6 +17,11 @@ This follows the same overall shape as Playwright's own CLI surface: one command
 npm install -g react-devtool-cli
 ```
 
+Published package notes:
+
+- npm consumers receive built files from `dist/`, not the repository source tree.
+- repository-only validation artifacts, handoff docs, and local test fixtures are intentionally excluded from the published package.
+
 `rdt` resolves Playwright in this order:
 
 - local `playwright`

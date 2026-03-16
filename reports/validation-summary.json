@@ -1,0 +1,113 @@
+{
+  "commitHash": "a368b941e40ab1ed4887724a1d6b176615169638",
+  "timestamp": "2026-03-16T14:24:10.000Z",
+  "nodeVersion": "v24.14.0",
+  "unitTests": {
+    "result": "pass",
+    "count": 8,
+    "note": "Plan referenced 14 tests; actual test file contains 8 tests — all pass"
+  },
+  "sessionOpen": {
+    "reactDetected": true,
+    "sessionName": "app",
+    "transport": "open",
+    "browserName": "chromium",
+    "target": "http://127.0.0.1:3000/",
+    "nodeCount": 64,
+    "roots": [{ "id": "root-1", "rendererId": 1, "nodeId": "n1" }],
+    "result": "pass"
+  },
+  "sessionStatus": {
+    "confirmed": true,
+    "result": "pass"
+  },
+  "treeGet": {
+    "snapshotId": "snapshot-2",
+    "nodeCount": 65,
+    "rootNodeId": "n66",
+    "rootDisplayName": "Mode",
+    "generatedAt": "2026-03-16T14:23:17.448Z",
+    "result": "pass"
+  },
+  "nodeSearch": {
+    "query": "App",
+    "hitCount": 1,
+    "firstHit": {
+      "id": "n68",
+      "displayName": "App",
+      "tagName": "FunctionComponent",
+      "depth": 1,
+      "snapshotId": "snapshot-2"
+    },
+    "snapshotIdPresent": true,
+    "result": "pass"
+  },
+  "nodeInspect": {
+    "id": "n68",
+    "displayName": "App",
+    "snapshotId": "snapshot-2",
+    "propsKeys": [],
+    "stateKeys": ["memoizedState", "baseState", "baseQueue", "queue", "next"],
+    "stateValues": { "count": 0, "tick": 1 },
+    "hooksCount": 3,
+    "hookTypes": ["useState(count=0)", "useState(tick=1)", "useEffect"],
+    "context": [],
+    "ownerStack": ["Mode (n66)", "HostRoot (n67)"],
+    "result": "pass"
+  },
+  "nodeHighlight": {
+    "domRect": {
+      "tagName": "section",
+      "id": "center",
+      "x": 78,
+      "y": 0,
+      "width": 1124,
+      "height": 462.53125
+    },
+    "error": null,
+    "result": "pass"
+  },
+  "sourceReveal": {
+    "result": null,
+    "exitCode": 0,
+    "interpretation": "No _debugSource in Vite dev build — expected null, not a lookup failure",
+    "pass": true
+  },
+  "profiler": {
+    "profileId": "profile-mmt9xjzv",
+    "startedAt": "2026-03-16T14:23:42.723Z",
+    "stoppedAt": "2026-03-16T14:24:01.612Z",
+    "durationSeconds": 18.889,
+    "commitCount": 4,
+    "maxNodeCount": 64,
+    "minNodeCount": 64,
+    "averageNodeCount": 64,
+    "roots": ["root-1"],
+    "exportPath": "/Users/kimmanjoong/private-project/rdt-cli/app-profile-mmt9xjzv.jsonl.gz",
+    "compressed": true,
+    "result": "pass"
+  },
+  "snapshotExpired": {
+    "tested": true,
+    "evictionMethod": "Created snapshots 3–7 (5 additional tree get calls) to push snapshot-2 out of maxSnapshots=5 cache",
+    "exitCode": 1,
+    "errorMessage": "Snapshot \"snapshot-2\" is no longer available. Run rdt tree get --session <name> again to collect a fresh snapshot.",
+    "internalErrorCode": "snapshot-expired",
+    "internalErrorCodeSource": "inferred from src/runtime-script.js:405 — CLI stderr only surfaces the human-readable message, not the code string",
+    "pass": true,
+    "result": "pass"
+  },
+  "issues": [],
+  "verdict": "pass",
+  "checkSummary": {
+    "unitTests": "pass",
+    "sessionOpen": "pass",
+    "treeGet": "pass",
+    "nodeSearch": "pass",
+    "nodeInspect": "pass",
+    "nodeHighlight": "pass",
+    "sourceReveal": "pass",
+    "profiler": "pass",
+    "snapshotExpired": "pass"
+  }
+}

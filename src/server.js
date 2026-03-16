@@ -87,6 +87,17 @@ async function loadPlaywright() {
   }
 }
 
+function unwrapRuntimeResult(result) {
+  if (result?.__rdtError) {
+    throw new CliError(result.message, {
+      code: result.code,
+      details: result.details,
+    });
+  }
+
+  return result;
+}
+
 function parseServerArgv(argv) {
   const options = {};
 
@@ -336,8 +347,12 @@ class SessionServer {
     return this.page.evaluate(() => window.__RDT_CLI_RUNTIME__.collectTree());
   }
 
+  async peekTree() {
+    return this.page.evaluate(() => window.__RDT_CLI_RUNTIME__.peekTree());
+  }
+
   async status() {
-    const tree = await this.collectTree();
+    const tree = await this.peekTree();
     return {
       sessionName: this.sessionName,
       transport: this.transport,
@@ -357,7 +372,7 @@ class SessionServer {
   }
 
   async ensureReactDetected() {
-    const tree = await this.collectTree();
+    const tree = await this.peekTree();
     if (!tree.reactDetected) {
       throw new CliError("The current page does not expose a React fiber tree.", {
         code: "not-react-app",
@@ -405,16 +420,25 @@ class SessionServer {
       case "session.close":
         return this.close();
       case "tree.get":
-        return this.ensureReactDetected();
+        return this.collectTree();
       case "node.inspect":
         await this.ensureReactDetected();
-        return this.page.evaluate((nodeId) => window.__RDT_CLI_RUNTIME__.inspectNode(nodeId), payload.nodeId);
+        return unwrapRuntimeResult(await this.page.evaluate(
+          ({ nodeId, snapshotId }) => window.__RDT_CLI_RUNTIME__.inspectNode(nodeId, snapshotId),
+          payload,
+        ));
       case "node.search":
         await this.ensureReactDetected();
-        return this.page.evaluate((query) => window.__RDT_CLI_RUNTIME__.searchNodes(query), payload.query);
+        return unwrapRuntimeResult(await this.page.evaluate(
+          ({ query, snapshotId }) => window.__RDT_CLI_RUNTIME__.searchNodes(query, snapshotId),
+          payload,
+        ));
       case "node.highlight":
         await this.ensureReactDetected();
-        return this.page.evaluate((nodeId) => window.__RDT_CLI_RUNTIME__.highlightNode(nodeId), payload.nodeId);
+        return unwrapRuntimeResult(await this.page.evaluate(
+          ({ nodeId, snapshotId }) => window.__RDT_CLI_RUNTIME__.highlightNode(nodeId, snapshotId),
+          payload,
+        ));
       case "node.pick":
         await this.ensureReactDetected();
         return this.page.evaluate((timeoutMs) => window.__RDT_CLI_RUNTIME__.pickNode(timeoutMs), payload.timeoutMs ?? 30000);
@@ -432,10 +456,10 @@ class SessionServer {
         return this.page.evaluate(() => window.__RDT_CLI_RUNTIME__.profilerSummary());
       case "source.reveal":
         await this.ensureReactDetected();
-        return this.page.evaluate((nodeId) => {
-          const node = window.__RDT_CLI_RUNTIME__.inspectNode(nodeId);
+        return unwrapRuntimeResult(await this.page.evaluate(({ nodeId, snapshotId }) => {
+          const node = window.__RDT_CLI_RUNTIME__.inspectNode(nodeId, snapshotId);
           return node ? node.source : null;
-        }, payload.nodeId);
+        }, payload));
       default:
         throw new CliError(`Unsupported action: ${action}`, { code: "unsupported-action" });
     }

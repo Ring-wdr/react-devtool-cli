@@ -34,6 +34,10 @@ Implemented:
   - profiler raw export `jsonl` / `jsonl.gz`
 - local React validation target:
   - `test-app/` Vite React template for real-app verification
+- snapshot-aware lookup:
+  - `tree get` returns `snapshotId`
+  - `node inspect|search|highlight` and `source reveal` accept `--snapshot <id>`
+  - runtime keeps a small in-memory snapshot cache
 
 Implemented files to inspect first:
 
@@ -67,6 +71,13 @@ node bin/rdt.js session close --session smoke-open-escalated
 - `profiler stop` reported `commitCount: 42`, `maxNodeCount: 64`, `roots: ["root-1"]`.
 - `profiler export --session app --compress` produced `/Users/kimmanjoong/private-project/rdt-cli/app-profile-mmt78xlw.jsonl.gz`.
 - In this environment, both the Vite dev server port bind and `rdt` session commands that talk to the local session daemon required sandbox escalation.
+- `tree get` now returns a `snapshotId` for snapshot-local node lookup.
+- `node search App --session app --snapshot <snapshotId>` and `node inspect <nodeId> --session app --snapshot <snapshotId>` were verified against the same collected snapshot after later React updates.
+- strict snapshot-time inspect behavior was verified:
+  - `tree get` captured `App` with `Auto tick: 1`
+  - after waiting for later React updates, `node inspect <nodeId> --snapshot <same-id>` still returned `tick = 1`
+- `node highlight <nodeId> --session app --snapshot <snapshotId>` worked with snapshot-aware lookup.
+- `source reveal <nodeId> --session app --snapshot <snapshotId>` executed successfully; for `App` it returned `null`, consistent with missing `_debugSource` rather than a snapshot lookup failure.
 
 ## Known Issue From Real-App Run
 
@@ -83,6 +94,38 @@ node bin/rdt.js session close --session smoke-open-escalated
 - Interpretation:
   - there may be a bug in node ID stability, tree snapshot freshness, or lookup synchronization after updates/HMR
   - React inspection is functional, but node references are not yet trustworthy enough to call fully stable
+
+## Current Design Decision
+
+- `snapshot-local` node identity is now the active implementation direction.
+- Working definition:
+  - `tree get` should create a `snapshotId`
+  - each node `id` is only guaranteed to be valid within that snapshot
+  - follow-up commands such as `node search`, `node inspect`, and `node highlight` should resolve against the same snapshot instead of re-walking the latest live fiber tree
+- Rationale:
+  - current IDs are keyed by live fiber object identity and are not stable across updates or HMR
+  - forcing globally stable IDs across React commits would be more complex and less reliable than first making snapshot semantics explicit
+  - snapshot-local IDs are sufficient for a CLI flow where users first fetch a tree, then inspect/search/highlight within that same view
+- Expected implementation shape:
+  - keep a small in-memory snapshot cache in the page runtime
+  - store `snapshotId`, serialized nodes, and a `nodeId -> fiber` lookup for that snapshot
+  - make server/CLI commands accept a snapshot reference where needed
+  - document that a node ID without its snapshot context is not globally meaningful
+
+## Remaining Gap After Snapshot Work
+
+- Snapshot lookup now keeps node identity stable enough for `tree get -> search/inspect/highlight/source`.
+- Current implementation status:
+  - explicit `--snapshot <id>` is supported
+  - omitting `--snapshot` falls back to the latest collected snapshot
+  - if an explicitly requested snapshot has been evicted, commands now fail with `snapshot-expired` instead of silently falling back
+- Agent-oriented operating rule:
+  - agents should treat `tree get` as the start of a lookup cycle
+  - agents should persist the returned `snapshotId` and pass it to all later node/source commands
+  - latest-snapshot fallback exists for convenience, not as the preferred deterministic path
+- Remaining questions:
+  - should `pick` be documented more explicitly as a snapshot-producing command
+  - how should snapshot cache size and eviction policy be surfaced in user-facing docs
 
 ## Important Constraints
 
@@ -107,18 +150,24 @@ node bin/rdt.js session close --session smoke-open-escalated
 
 Primary next milestone:
 
-- investigate and fix runtime gaps found during the first real React app validation pass
+- polish the agent-facing snapshot workflow and document cache lifetime / follow-up rules clearly
 
 Concrete tasks:
 
 1. Reuse `test-app/` as the default local React validation target.
-2. Investigate why node IDs differ between `tree get` and `node search` after updates.
-3. Decide whether node IDs should be stable across commits or explicitly documented as snapshot-local.
-4. Fix `node inspect` so recently returned IDs do not resolve to `null` during normal update flow.
-5. Re-run the same React validation after the fix:
+2. Document the adopted agent policy in README/help:
+   - `tree get` first
+   - persist `snapshotId`
+   - pass `--snapshot` on follow-up node/source commands
+3. Decide whether `pick` should be documented more explicitly as returning snapshot-scoped data.
+4. Document snapshot cache behavior:
+   - current cache size
+   - eviction expectations
+   - `snapshot-expired` recovery flow
+5. Re-run the same React validation after the doc / UX cleanup:
    - `session open` returns `reactDetected: true`
-   - `tree get` returns credible roots and nodes
-   - `node inspect` works on IDs returned by both `tree get` and `node search`
+   - `tree get` returns credible roots, nodes, and a snapshot identifier
+   - `node search`, `node inspect`, `node highlight`, and `source reveal` work on IDs from that same snapshot
    - profiler still captures real commits
 6. Revisit whether official DevTools types or references would help stabilize node identity modeling.
 
@@ -153,12 +202,26 @@ node bin/rdt.js profiler export --session app --compress
 node bin/rdt.js session close --session app
 ```
 
+Planned post-change shape:
+
+```bash
+node bin/rdt.js tree get --session app
+# => returns snapshotId, roots, nodes
+node bin/rdt.js node search App --session app --snapshot <snapshotId>
+node bin/rdt.js node inspect <nodeId> --session app --snapshot <snapshotId>
+node bin/rdt.js node highlight <nodeId> --session app --snapshot <snapshotId>
+node bin/rdt.js source reveal <nodeId> --session app --snapshot <snapshotId>
+```
+
 5. If port binding, browser launch, or session RPC is blocked, rerun the affected command with sandbox escalation.
 
 ## Definition of Done for Next Session
 
 - `rdt` still works against `test-app/` or another real React app with `reactDetected: true`.
-- `tree get`, `node search`, and `node inspect` agree on node identity during normal updates.
+- `tree get` returns a snapshot identifier and node IDs scoped to that snapshot.
+- `node search`, `node inspect`, and `node highlight` resolve nodes correctly when given the same snapshot context.
+- `source reveal` also resolves correctly with snapshot-aware lookup.
+- snapshot behavior is documented clearly enough that users know when `--snapshot` is required, how long snapshots live, and what happens on expiry.
 - profiler flow still captures at least one real React update after the node identity fix.
 - any discovered defects are either fixed or documented in this file with exact repro steps.
 

@@ -87,6 +87,10 @@ function resolveFormat(options, fallback = "json") {
   return options.format ? String(options.format) : fallback;
 }
 
+function collectSnapshotPayload(options) {
+  return options.snapshot ? { snapshotId: String(options.snapshot) } : {};
+}
+
 function writeStdout(value, format) {
   process.stdout.write(formatOutput(value, format));
 }
@@ -176,7 +180,10 @@ async function handleNodeCommand(command, positionals, options) {
   if (command === "inspect") {
     const nodeId = positionals[0];
     ensure(nodeId, "Missing node id for `rdt node inspect`.", { code: "missing-node-id" });
-    const response = await requestSession(options.session, "node.inspect", { nodeId });
+    const response = await requestSession(options.session, "node.inspect", {
+      nodeId,
+      ...collectSnapshotPayload(options),
+    });
     writeStdout(response.result, resolveFormat(options));
     return;
   }
@@ -184,7 +191,10 @@ async function handleNodeCommand(command, positionals, options) {
   if (command === "search") {
     const query = positionals.join(" ");
     ensure(query, "Missing query for `rdt node search`.", { code: "missing-query" });
-    const response = await requestSession(options.session, "node.search", { query });
+    const response = await requestSession(options.session, "node.search", {
+      query,
+      ...collectSnapshotPayload(options),
+    });
     writeStdout(response.result, resolveFormat(options));
     return;
   }
@@ -192,7 +202,10 @@ async function handleNodeCommand(command, positionals, options) {
   if (command === "highlight") {
     const nodeId = positionals[0];
     ensure(nodeId, "Missing node id for `rdt node highlight`.", { code: "missing-node-id" });
-    const response = await requestSession(options.session, "node.highlight", { nodeId });
+    const response = await requestSession(options.session, "node.highlight", {
+      nodeId,
+      ...collectSnapshotPayload(options),
+    });
     writeStdout(response.result, resolveFormat(options));
     return;
   }
@@ -283,7 +296,10 @@ async function handleSourceCommand(command, positionals, options) {
   ensure(options.session, "Missing required option --session", { code: "missing-session" });
   const nodeId = positionals[0];
   ensure(nodeId, "Missing node id for `rdt source reveal`.", { code: "missing-node-id" });
-  const response = await requestSession(options.session, "source.reveal", { nodeId });
+  const response = await requestSession(options.session, "source.reveal", {
+    nodeId,
+    ...collectSnapshotPayload(options),
+  });
   writeStdout(response.result, resolveFormat(options));
 }
 
@@ -295,6 +311,7 @@ Recommended flow:
   2. Use rdt session connect for a remote Playwright wsEndpoint
   3. Use rdt session attach only for Chromium CDP compatibility
   4. Use rdt tree/node/profiler commands for structured output
+  5. For agent workflows, capture snapshotId from tree get and pass it to later node/source commands
 
 Usage:
   rdt session open --url <url> [--browser chromium|firefox|webkit] [--channel <name>] [--device <name>] [--storage-state <path>] [--user-data-dir <path>] [--timeout <ms>] [--headless=false] [--session <name>]
@@ -303,15 +320,21 @@ Usage:
   rdt session status --session <name>
   rdt session close --session <name>
   rdt tree get --session <name> [--format json|yaml|pretty]
-  rdt node inspect <id> --session <name>
-  rdt node search <query> --session <name>
-  rdt node highlight <id> --session <name>
+  rdt node inspect <id> --session <name> [--snapshot <id>]
+  rdt node search <query> --session <name> [--snapshot <id>]
+  rdt node highlight <id> --session <name> [--snapshot <id>]
   rdt node pick --session <name> [--timeout-ms 30000]
   rdt profiler start --session <name> [--profile-id <id>]
   rdt profiler stop --session <name>
   rdt profiler summary --session <name> [--format json|yaml|pretty]
   rdt profiler export --session <name> [--output file.jsonl] [--compress]
-  rdt source reveal <id> --session <name>
+  rdt source reveal <id> --session <name> [--snapshot <id>]
+
+Snapshot behavior:
+  - tree get returns snapshotId
+  - node ids are scoped to that snapshot
+  - if --snapshot is omitted, commands use the latest collected snapshot
+  - if an explicit snapshot has expired, commands fail with snapshot-expired
 `);
 }
 

@@ -7,9 +7,13 @@ export function createRuntimeScript() {
   const state = {
     nextNodeId: 1,
     nextRootId: 1,
+    nextSnapshotId: 1,
     fiberIds: new WeakMap(),
     roots: new Map(),
     renderers: new Map(),
+    snapshots: new Map(),
+    latestSnapshotId: null,
+    maxSnapshots: 5,
     profiler: {
       active: false,
       profileId: null,
@@ -19,6 +23,15 @@ export function createRuntimeScript() {
     },
     overlay: null,
   };
+
+  function createRuntimeError(code, message, details) {
+    return {
+      __rdtError: true,
+      code,
+      message,
+      details: details || null,
+    };
+  }
 
   const tagNames = {
     0: "FunctionComponent",
@@ -61,6 +74,22 @@ export function createRuntimeScript() {
     }
 
     return entry;
+  }
+
+  function pruneSnapshots() {
+    while (state.snapshots.size > state.maxSnapshots) {
+      const oldestSnapshotId = state.snapshots.keys().next().value;
+      if (!oldestSnapshotId) {
+        break;
+      }
+
+      state.snapshots.delete(oldestSnapshotId);
+      if (state.latestSnapshotId === oldestSnapshotId) {
+        state.latestSnapshotId = state.snapshots.size
+          ? Array.from(state.snapshots.keys()).pop()
+          : null;
+      }
+    }
   }
 
   function safeSerialize(value, depth = 0, seen) {
@@ -240,23 +269,43 @@ export function createRuntimeScript() {
     };
   }
 
-  function traverseFiberTree(fiber, parentId, depth, rootId, output) {
+  function buildNodeDetails(fiber, node) {
+    return {
+      snapshotId: null,
+      id: node.id,
+      displayName: node.displayName,
+      tag: node.tag,
+      tagName: node.tagName,
+      key: node.key,
+      props: safeSerialize(fiber.memoizedProps),
+      state: safeSerialize(fiber.memoizedState),
+      hooks: getHooks(fiber),
+      context: getContextDependencies(fiber),
+      ownerStack: getOwnerStack(fiber),
+      source: node.source,
+      dom: node.dom,
+    };
+  }
+
+  function traverseFiberTree(fiber, parentId, depth, rootId, output, nodeDetails) {
     let current = fiber;
     while (current) {
       const node = buildNodeRecord(current, parentId, depth, rootId);
       output.push(node);
+      nodeDetails.set(node.id, buildNodeDetails(current, node));
 
       if (current.child) {
-        traverseFiberTree(current.child, node.id, depth + 1, rootId, output);
+        traverseFiberTree(current.child, node.id, depth + 1, rootId, output, nodeDetails);
       }
 
       current = current.sibling;
     }
   }
 
-  function collectTree() {
+  function collectLiveTree() {
     const roots = [];
     const nodes = [];
+    const nodeDetails = new Map();
 
     for (const entry of state.roots.values()) {
       const root = entry.root;
@@ -271,7 +320,7 @@ export function createRuntimeScript() {
         nodeId: getFiberId(current.child),
       });
 
-      traverseFiberTree(current.child, null, 0, entry.rootId, nodes);
+      traverseFiberTree(current.child, null, 0, entry.rootId, nodes, nodeDetails);
     }
 
     return {
@@ -280,68 +329,132 @@ export function createRuntimeScript() {
       roots,
       nodes,
       selectedNodeId: null,
+      nodeDetails,
     };
   }
 
-  function walk(fiber, nodeId) {
-    let current = fiber;
-    while (current) {
-      if (getFiberId(current) === nodeId) {
-        return current;
-      }
-
-      if (current.child) {
-        const childMatch = walk(current.child, nodeId);
-        if (childMatch) {
-          return childMatch;
-        }
-      }
-
-      current = current.sibling;
-    }
-
-    return null;
+  function serializeSnapshot(snapshot) {
+    return {
+      snapshotId: snapshot.snapshotId,
+      generatedAt: snapshot.generatedAt,
+      reactDetected: snapshot.reactDetected,
+      roots: snapshot.roots,
+      nodes: snapshot.nodes,
+      selectedNodeId: snapshot.selectedNodeId,
+    };
   }
 
-  function findFiberById(nodeId) {
-    for (const entry of state.roots.values()) {
-      const match = walk(entry.root?.current?.child, nodeId);
-      if (match) {
-        return match;
-      }
-    }
+  function cacheSnapshot(tree) {
+    const snapshotId = "snapshot-" + state.nextSnapshotId++;
+    const snapshot = {
+      snapshotId,
+      generatedAt: tree.generatedAt,
+      reactDetected: tree.reactDetected,
+      roots: tree.roots,
+      nodes: tree.nodes,
+      selectedNodeId: tree.selectedNodeId,
+      nodeDetails: new Map(
+        Array.from(tree.nodeDetails.entries(), ([nodeId, details]) => [
+          nodeId,
+          {
+            ...details,
+            snapshotId,
+          },
+        ]),
+      ),
+    };
 
-    return null;
+    state.snapshots.set(snapshot.snapshotId, snapshot);
+    state.latestSnapshotId = snapshot.snapshotId;
+    pruneSnapshots();
+    return snapshot;
   }
 
-  function inspectNode(nodeId) {
-    const fiber = findFiberById(nodeId);
-    if (!fiber) {
+  function collectTree() {
+    const liveTree = collectLiveTree();
+    if (!liveTree.reactDetected) {
+      return {
+        snapshotId: null,
+        generatedAt: liveTree.generatedAt,
+        reactDetected: false,
+        roots: [],
+        nodes: [],
+        selectedNodeId: null,
+      };
+    }
+
+    const snapshot = cacheSnapshot(liveTree);
+    return serializeSnapshot(snapshot);
+  }
+
+  function peekTree() {
+    const liveTree = collectLiveTree();
+    return {
+      snapshotId: null,
+      generatedAt: liveTree.generatedAt,
+      reactDetected: liveTree.reactDetected,
+      roots: liveTree.roots,
+      nodes: liveTree.nodes,
+      selectedNodeId: liveTree.selectedNodeId,
+    };
+  }
+
+  function resolveSnapshot(snapshotId, createIfMissing = true) {
+    if (snapshotId) {
+      return state.snapshots.get(snapshotId) || createRuntimeError(
+        "snapshot-expired",
+        "Snapshot \"" + snapshotId + "\" is no longer available. Run rdt tree get --session <name> again to collect a fresh snapshot.",
+        { snapshotId },
+      );
+    }
+
+    if (state.latestSnapshotId) {
+      return state.snapshots.get(state.latestSnapshotId) || null;
+    }
+
+    if (!createIfMissing) {
       return null;
     }
 
-    return {
-      id: nodeId,
-      displayName: getDisplayName(fiber),
-      tag: fiber.tag,
-      tagName: tagNames[fiber.tag] || "Unknown",
-      key: fiber.key == null ? null : String(fiber.key),
-      props: safeSerialize(fiber.memoizedProps),
-      state: safeSerialize(fiber.memoizedState),
-      hooks: getHooks(fiber),
-      context: getContextDependencies(fiber),
-      ownerStack: getOwnerStack(fiber),
-      source: getFiberSource(fiber),
-      dom: getDomInfo(fiber),
-    };
+    const snapshot = collectTree();
+    if (!snapshot.reactDetected || !snapshot.snapshotId) {
+      return null;
+    }
+
+    return state.snapshots.get(snapshot.snapshotId) || null;
   }
 
-  function searchNodes(query) {
+  function inspectNode(nodeId, snapshotId) {
+    const snapshot = resolveSnapshot(snapshotId);
+    if (snapshot?.__rdtError) {
+      return snapshot;
+    }
+
+    const details = snapshot?.nodeDetails.get(nodeId);
+    if (!snapshot || !details) {
+      return null;
+    }
+
+    return details;
+  }
+
+  function searchNodes(query, snapshotId) {
+    const snapshot = resolveSnapshot(snapshotId);
+    if (snapshot?.__rdtError) {
+      return snapshot;
+    }
+
+    if (!snapshot) {
+      return [];
+    }
+
     const lower = String(query || "").toLowerCase();
-    const snapshot = collectTree();
     return snapshot.nodes.filter((node) => {
       return String(node.displayName || "").toLowerCase().includes(lower);
-    });
+    }).map((node) => ({
+      ...node,
+      snapshotId: snapshot.snapshotId,
+    }));
   }
 
   function ensureOverlay() {
@@ -363,8 +476,12 @@ export function createRuntimeScript() {
     return overlay;
   }
 
-  function highlightNode(nodeId) {
-    const details = inspectNode(nodeId);
+  function highlightNode(nodeId, snapshotId) {
+    const details = inspectNode(nodeId, snapshotId);
+    if (details?.__rdtError) {
+      return details;
+    }
+
     if (!details?.dom?.rect) {
       return null;
     }
@@ -394,6 +511,9 @@ export function createRuntimeScript() {
 
   function pickNode(timeoutMs) {
     return new Promise((resolve) => {
+      const snapshot = collectTree();
+      const snapshotId = snapshot.snapshotId;
+
       function cleanup(result) {
         document.removeEventListener("mouseover", handleHover, true);
         document.removeEventListener("click", handleClick, true);
@@ -409,7 +529,7 @@ export function createRuntimeScript() {
           return;
         }
 
-        highlightNode(getFiberId(fiber));
+        highlightNode(getFiberId(fiber), snapshotId);
       }
 
       function handleClick(event) {
@@ -421,7 +541,7 @@ export function createRuntimeScript() {
           return;
         }
 
-        cleanup(inspectNode(getFiberId(fiber)));
+        cleanup(inspectNode(getFiberId(fiber), snapshotId));
       }
 
       document.addEventListener("mouseover", handleHover, true);
@@ -457,14 +577,14 @@ export function createRuntimeScript() {
       return;
     }
 
-    const snapshot = collectTree();
+    const liveTree = collectLiveTree();
     state.profiler.events.push({
       eventType: "commit",
       timestamp: new Date().toISOString(),
       rootId: rootState.rootId,
       rendererId,
       priorityLevel: priorityLevel == null ? null : priorityLevel,
-      nodeCount: snapshot.nodes.length,
+      nodeCount: liveTree.nodes.length,
     });
   }
 
@@ -501,6 +621,7 @@ export function createRuntimeScript() {
 
   window.__RDT_CLI_RUNTIME__ = {
     collectTree,
+    peekTree,
     inspectNode,
     searchNodes,
     highlightNode,

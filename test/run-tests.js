@@ -40,6 +40,22 @@ run("parseArgv supports booleans, numbers, and positionals", () => {
   assert.equal(parsed.options.timeout, 5000);
 });
 
+run("parseArgv preserves snapshot options for node commands", () => {
+  const parsed = parseArgv([
+    "node",
+    "inspect",
+    "n12",
+    "--session",
+    "app",
+    "--snapshot",
+    "snapshot-3",
+  ]);
+
+  assert.deepEqual(parsed.positionals, ["node", "inspect", "n12"]);
+  assert.equal(parsed.options.session, "app");
+  assert.equal(parsed.options.snapshot, "snapshot-3");
+});
+
 run("formatOutput renders JSON", () => {
   const output = formatOutput({ ok: true }, "json");
   assert.match(output, /"ok": true/);

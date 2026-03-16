@@ -128,12 +128,14 @@ node bin/rdt.js session close --session smoke-open-escalated
   - omitting `--snapshot` falls back to the latest collected snapshot
   - runtime snapshot cache size is currently `5` per session
   - if an explicitly requested snapshot has been evicted, commands now fail with `snapshot-expired` instead of silently falling back
+- Snapshot cache decision:
+  - keep cache size fixed at `5` for now
+  - do not make it user-configurable until there is evidence that `5` is too small in real agent workflows
+  - revisit configurability only if snapshot eviction becomes a recurring operational problem
 - Agent-oriented operating rule:
   - agents should treat `tree get` as the start of a lookup cycle
   - agents should persist the returned `snapshotId` and pass it to all later node/source commands
   - latest-snapshot fallback exists for convenience, not as the preferred deterministic path
-- Remaining questions:
-  - whether snapshot cache size should stay fixed at `5` or become configurable
 
 ## Important Constraints
 
@@ -172,13 +174,12 @@ Concrete tasks:
    - persist `snapshotId`
    - `node search|inspect|highlight|source reveal` with `--snapshot`
 3. Decide whether `node pick` needs a more prominent README example now that the behavior is verified.
-4. Verify snapshot eviction behavior remains acceptable with cache size `5`.
-5. Re-run the same React validation after the doc / UX cleanup:
+4. Re-run the same React validation after the doc / UX cleanup:
    - `session open` returns `reactDetected: true`
    - `tree get` returns credible roots, nodes, and a snapshot identifier
    - `node search`, `node inspect`, `node highlight`, `source reveal`, and `node pick` work on IDs from that same snapshot
    - profiler still captures real commits
-6. Revisit whether official DevTools types or references would help stabilize node identity modeling.
+5. Revisit whether official DevTools types or references would help stabilize node identity modeling.
 
 ## Suggested Execution Order
 

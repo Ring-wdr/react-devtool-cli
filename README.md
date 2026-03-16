@@ -43,6 +43,7 @@ rdt profiler export --session demo --compress
 
 - `tree get` returns a `snapshotId`.
 - Node IDs are only meaningful within that snapshot.
+- The runtime currently keeps up to `5` snapshots in memory per session.
 - Agent-friendly recommended flow:
   1. call `tree get`
   2. store the returned `snapshotId`
@@ -50,6 +51,29 @@ rdt profiler export --session demo --compress
 - If `--snapshot` is omitted, commands fall back to the latest collected snapshot.
 - If an explicitly requested snapshot has been evicted from the runtime cache, commands fail with `snapshot-expired`.
 - Responses from snapshot-aware commands include the `snapshotId` that was actually used, so agents can pin follow-up calls to it.
+
+Example deterministic flow:
+
+```bash
+rdt tree get --session demo
+# => save snapshotId from output
+rdt node search App --session demo --snapshot <snapshotId>
+rdt node inspect <nodeId> --session demo --snapshot <snapshotId>
+rdt node highlight <nodeId> --session demo --snapshot <snapshotId>
+rdt source reveal <nodeId> --session demo --snapshot <snapshotId>
+```
+
+Snapshot recovery:
+
+- If you get `snapshot-expired`, do not reuse old node IDs.
+- Run `rdt tree get --session <name>` again.
+- Read the new `snapshotId`.
+- Re-run `node search` against the new snapshot before further inspection.
+
+`node pick` behavior:
+
+- `node pick` captures a snapshot-scoped result and returns the same shape as `node inspect`.
+- Agents should persist the returned `snapshotId` and use it for any follow-up commands.
 
 ## Output formats
 

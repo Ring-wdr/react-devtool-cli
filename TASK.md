@@ -118,14 +118,15 @@ node bin/rdt.js session close --session smoke-open-escalated
 - Current implementation status:
   - explicit `--snapshot <id>` is supported
   - omitting `--snapshot` falls back to the latest collected snapshot
+  - runtime snapshot cache size is currently `5` per session
   - if an explicitly requested snapshot has been evicted, commands now fail with `snapshot-expired` instead of silently falling back
 - Agent-oriented operating rule:
   - agents should treat `tree get` as the start of a lookup cycle
   - agents should persist the returned `snapshotId` and pass it to all later node/source commands
   - latest-snapshot fallback exists for convenience, not as the preferred deterministic path
 - Remaining questions:
-  - should `pick` be documented more explicitly as a snapshot-producing command
-  - how should snapshot cache size and eviction policy be surfaced in user-facing docs
+  - whether `pick` needs more prominent user-facing examples
+  - whether snapshot cache size should stay fixed at `5` or become configurable
 
 ## Important Constraints
 
@@ -150,20 +151,17 @@ node bin/rdt.js session close --session smoke-open-escalated
 
 Primary next milestone:
 
-- polish the agent-facing snapshot workflow and document cache lifetime / follow-up rules clearly
+- re-run end-to-end validation against the documented agent snapshot workflow and decide whether any snapshot UX should still change
 
 Concrete tasks:
 
 1. Reuse `test-app/` as the default local React validation target.
-2. Document the adopted agent policy in README/help:
-   - `tree get` first
+2. Re-run the documented agent workflow exactly as written in README / skill docs:
+   - `tree get`
    - persist `snapshotId`
-   - pass `--snapshot` on follow-up node/source commands
-3. Decide whether `pick` should be documented more explicitly as returning snapshot-scoped data.
-4. Document snapshot cache behavior:
-   - current cache size
-   - eviction expectations
-   - `snapshot-expired` recovery flow
+   - `node search|inspect|highlight|source reveal` with `--snapshot`
+3. Validate `node pick` output shape and decide whether it needs a README example.
+4. Verify snapshot eviction behavior remains acceptable with cache size `5`.
 5. Re-run the same React validation after the doc / UX cleanup:
    - `session open` returns `reactDetected: true`
    - `tree get` returns credible roots, nodes, and a snapshot identifier

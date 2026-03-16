@@ -43,14 +43,14 @@ rdt session attach --cdp-url http://127.0.0.1:9222 --target-url localhost:3000 -
 
 ```bash
 rdt tree get --session app
-rdt node search App --session app
+rdt node search App --session app --snapshot <snapshotId>
 ```
 
 3. Inspect a node in detail.
 
 ```bash
-rdt node inspect n1 --session app
-rdt source reveal n1 --session app
+rdt node inspect n1 --session app --snapshot <snapshotId>
+rdt source reveal n1 --session app --snapshot <snapshotId>
 ```
 
 4. For compact human review, switch output format.
@@ -76,6 +76,9 @@ rdt session close --session app
 ## Rules
 
 - Use `JSON` as the default machine interface.
+- Treat `tree get` as the start of a lookup cycle and persist its `snapshotId`.
+- Prefer explicit `--snapshot <id>` on follow-up node and source commands.
+- If `snapshot-expired` is returned, collect a fresh tree and do not reuse old node IDs.
 - Use `YAML` only for compact summaries.
 - Do not request `YAML` for raw profiler export.
 - Prefer `open` over `connect`, and prefer `connect` over `attach`.

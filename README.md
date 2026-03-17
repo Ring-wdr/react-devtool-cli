@@ -38,10 +38,12 @@ rdt session connect --ws-endpoint ws://127.0.0.1:3000/ --target-url localhost:30
 rdt session attach --cdp-url http://127.0.0.1:9222 --target-url localhost:3000 --session cdp
 rdt session doctor --session demo
 rdt tree get --session demo
+rdt interact type --session demo --selector 'input[name="query"]' --text hello
 rdt node search App --session demo --snapshot <snapshotId>
 rdt node inspect <nodeId> --session demo --snapshot <snapshotId>
 rdt profiler start --session demo
 rdt profiler stop --session demo
+rdt profiler compare --session demo --left baseline --right candidate
 rdt profiler export --session demo --compress
 ```
 
@@ -62,9 +64,22 @@ rdt profiler export --session demo --compress
 
 - `rdt session doctor --session <name>` reports runtime readiness and trust boundaries before a deeper investigation.
 - It checks React detection, snapshot/inspect readiness, profiler capability, `_debugSource` availability, and Playwright resolution.
+- It also reports whether built-in `interact` commands are available on the current session target and whether duration metrics are exposed by the current React runtime.
 - It also warns when `rdt` itself can resolve Playwright but standalone helper scripts may still fail to `import('playwright')`.
 - When that mismatch happens, `doctor` returns `helperImportTarget` and `helperImportExample` so agents can import the same Playwright entry that `rdt` resolved without reading internal package files.
+- It returns `recommendedWorkflow`, `unsafeConclusions`, and `helperStrategy` so agents can decide whether to trust `interact`, `profiler`, or helper-based fallbacks.
 - Use it before profiling if browser interaction helpers or ad hoc Node scripts are involved.
+
+## Interact
+
+- Use built-in `interact` commands before reaching for external Playwright helper scripts.
+- Current supported actions:
+  - `rdt interact click --session <name> --selector <css>`
+  - `rdt interact type --session <name> --selector <css> --text <value>`
+  - `rdt interact press --session <name> --key <name> [--selector <css>]`
+  - `rdt interact wait --session <name> --ms <n>`
+- These commands execute through the same Playwright session that owns the current `rdt` browser page.
+- They target the first matching selector only and return structured action metadata plus trust-boundary fields.
 
 Example deterministic flow:
 
@@ -104,6 +119,8 @@ rdt profiler start --session app
 # in test-app, type one character into "Type to filter products"
 rdt profiler stop --session app
 rdt profiler summary --session app
+rdt profiler commits --session app
+rdt profiler ranked <commitId> --session app --limit 10
 rdt profiler export --session app --compress
 rdt tree get --session app
 # => save new snapshotId as SNAPSHOT_B
@@ -171,7 +188,11 @@ Use `node pick` when the agent knows the visible element but not the component n
   - `rdt profiler commit <commitId> --session <name>`
   - `rdt profiler ranked <commitId> --session <name> [--limit <n>]`
   - `rdt profiler flamegraph <commitId> --session <name>`
+  - `rdt profiler compare --session <name> --left <profileId|file> --right <profileId|file>`
 - `node inspect --commit <commitId>` expects a node id from that commit's profiler views, not from a separate `tree get` snapshot.
+- `profiler compare` can compare in-memory profile ids from the current session or exported `.jsonl` / `.jsonl.gz` profiler files.
+- `profiler ranked` now includes `reasonSummary`, `hotspotLabel`, and compact hotspot summaries.
+- `profiler flamegraph` now includes `hottestSubtrees`, `widestChangedSubtrees`, and `mostCommonReasons` at the root level.
 
 ## Concept Alignment
 
@@ -188,7 +209,6 @@ Use `node pick` when the agent knows the visible element but not the component n
 ## Skill
 
 - Repository skill: [skills/react-devtool-cli/SKILL.md](/C:/Users/김만중/private/react-devtool-cli/skills/react-devtool-cli/SKILL.md)
-- Session handoff: [TASK.md](/C:/Users/김만중/private/react-devtool-cli/TASK.md)
 
 ## Notes
 

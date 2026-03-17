@@ -1,6 +1,6 @@
 ---
 name: react-devtool-cli
-description: Maintain and validate the `react-devtool-cli` (`rdt`) repository. Use when working inside this repo to run tests, launch `test-app`, validate `session open|connect|attach|doctor`, inspect snapshot-aware node workflows, exercise profiler commit analysis, or prepare npm packaging and publish checks.
+description: Maintain and validate the `react-devtool-cli` (`rdt`) repository. Use when working inside this repo to run tests, launch `test-app`, validate `session open|connect|attach|doctor`, exercise built-in interact commands, inspect snapshot-aware node workflows, run profiler commit analysis and compare flows, or prepare npm packaging and publish checks.
 ---
 
 # React Devtool CLI
@@ -24,6 +24,7 @@ Use this skill to run and validate the `rdt` repository safely and consistently.
 ```bash
 node bin/rdt.js --help
 node bin/rdt.js session doctor --session app
+node bin/rdt.js interact wait --session app --ms 250
 ```
 
 - Start the local React target from [`test-app`](/Users/kimmanjoong/private-project/rdt-cli/test-app):
@@ -70,12 +71,19 @@ node bin/rdt.js profiler commits --session app
 node bin/rdt.js profiler commit <commitId> --session app
 node bin/rdt.js profiler ranked <commitId> --session app --limit 10
 node bin/rdt.js profiler flamegraph <commitId> --session app
+node bin/rdt.js profiler compare --session app --left baseline --right candidate
 node bin/rdt.js node inspect <nodeId> --session app --commit <commitId>
 ```
 
 - Read `measurementMode`, `measuresComponentDuration`, `limitations`, and `runtimeWarnings` literally.
 - Treat rerender reasons as snapshot-diff inference, not changed-fiber truth.
 - Treat `node inspect --commit` node IDs as commit-local profiler IDs, not general tree snapshot IDs.
+
+## Prefer Built-in Interact Commands
+
+- Use `interact click`, `interact type`, `interact press`, and `interact wait` before ad hoc helper scripts.
+- Keep selectors deterministic and CSS-based.
+- Use `session doctor` to confirm `supportsBuiltInInteract` before relying on interaction replay.
 
 ## Use Doctor Before Complex Validation
 
@@ -97,6 +105,5 @@ npm publish --dry-run
 
 ## References
 
-- Read [TASK.md](/Users/kimmanjoong/private-project/rdt-cli/TASK.md) only for session handoff or unresolved local work.
 - Read [README.md](/Users/kimmanjoong/private-project/rdt-cli/README.md) for current command examples and trust-boundary guidance.
 - Read [docs/devtools-concept-mapping.md](/Users/kimmanjoong/private-project/rdt-cli/docs/devtools-concept-mapping.md) before renaming or reinterpreting profiler fields.

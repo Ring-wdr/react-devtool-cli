@@ -507,6 +507,11 @@ class SessionServer {
 
     const checks = {
       ...runtimeDoctor.checks,
+      interaction: {
+        status: this.page ? "ok" : "failed",
+        hasPageTarget: Boolean(this.page),
+        supportsBuiltInInteract: Boolean(this.page),
+      },
       playwrightRuntime: {
         status: this.playwrightResolution.source === "unresolved" ? "failed" : "ok",
         source: this.playwrightResolution.source,
@@ -550,6 +555,85 @@ class SessionServer {
       externalNodeCanImportPlaywright: externalImport.ok,
       externalNodeImportCheck: externalImport.status,
       helperScriptWarning,
+      recommendedWorkflow: [
+        "run session doctor before profiling or scripted interactions",
+        "prefer built-in interact commands over ad hoc Playwright helper scripts",
+        "capture snapshotId with tree get before node search/inspect/highlight/source",
+        "use profiler commits, commit, ranked, flamegraph, and compare for follow-up analysis",
+      ],
+      unsafeConclusions: runtimeDoctor.unsafeConclusions || [
+        "all matching nodes rerendered because a commit happened",
+        "external helper scripts will resolve Playwright exactly like rdt does",
+      ],
+      helperStrategy: externalImport.ok ? "standalone-helper-or-interact" : "prefer-built-in-interact-or-helperImportTarget",
+    };
+  }
+
+  async ensureInteractivePage() {
+    if (!this.page) {
+      throw new CliError("The current session does not have an interactive page target.", {
+        code: "page-not-found",
+      });
+    }
+
+    return this.page;
+  }
+
+  async interact(command, payload) {
+    const page = await this.ensureInteractivePage();
+    const timeoutMs = payload.timeoutMs ? Number(payload.timeoutMs) : this.timeoutMs;
+
+    if (command === "wait") {
+      const ms = Number(payload.ms);
+      await page.waitForTimeout(ms);
+      return {
+        observationLevel: "observed",
+        limitations: [],
+        runtimeWarnings: [],
+        action: "wait",
+        ok: true,
+        waitedMs: ms,
+      };
+    }
+
+    const selector = payload.selector ? String(payload.selector) : null;
+    const locator = selector ? page.locator(selector).first() : null;
+    if (locator) {
+      await locator.waitFor({ state: "attached", timeout: timeoutMs });
+    }
+    const target = selector
+      ? await locator.evaluate((element) => ({
+          tagName: element.tagName.toLowerCase(),
+          id: element.id || null,
+          className: element.className || null,
+          textPreview: element.textContent ? element.textContent.slice(0, 80) : null,
+        }))
+      : null;
+
+    if (command === "click") {
+      await locator.click({ timeout: timeoutMs });
+    } else if (command === "type") {
+      await locator.click({ timeout: timeoutMs });
+      await locator.fill(String(payload.text), { timeout: timeoutMs });
+    } else if (command === "press") {
+      if (locator) {
+        await locator.click({ timeout: timeoutMs });
+      }
+      await page.keyboard.press(String(payload.key));
+    } else {
+      throw new CliError(`Unsupported interact action: ${command}`, { code: "unsupported-action" });
+    }
+
+    return {
+      observationLevel: "observed",
+      limitations: ["selector-based interaction targets the first matching element only"],
+      runtimeWarnings: [],
+      action: command,
+      ok: true,
+      selector,
+      target,
+      key: payload.key ? String(payload.key) : null,
+      textLength: payload.text != null ? String(payload.text).length : null,
     };
   }
 
@@ -626,6 +710,14 @@ class SessionServer {
       case "node.pick":
         await this.ensureReactDetected();
         return this.page.evaluate((timeoutMs) => window.__RDT_CLI_RUNTIME__.pickNode(timeoutMs), payload.timeoutMs ?? 30000);
+      case "interact.click":
+        return this.interact("click", payload);
+      case "interact.type":
+        return this.interact("type", payload);
+      case "interact.press":
+        return this.interact("press", payload);
+      case "interact.wait":
+        return this.interact("wait", payload);
       case "profiler.start":
         await this.ensureReactDetected();
         return this.page.evaluate((profileId) => window.__RDT_CLI_RUNTIME__.startProfiler(profileId), payload.profileId);
@@ -634,7 +726,16 @@ class SessionServer {
         return this.page.evaluate(() => window.__RDT_CLI_RUNTIME__.stopProfiler());
       case "profiler.export":
         await this.ensureReactDetected();
-        return this.page.evaluate(() => window.__RDT_CLI_RUNTIME__.exportProfiler());
+        return unwrapRuntimeResult(await this.page.evaluate(
+          ({ profileId }) => window.__RDT_CLI_RUNTIME__.exportProfiler(profileId),
+          payload,
+        ));
+      case "profiler.profile":
+        await this.ensureReactDetected();
+        return unwrapRuntimeResult(await this.page.evaluate(
+          ({ profileId }) => window.__RDT_CLI_RUNTIME__.profilerProfile(profileId),
+          payload,
+        ));
       case "profiler.summary":
         await this.ensureReactDetected();
         return this.page.evaluate(() => window.__RDT_CLI_RUNTIME__.profilerSummary());

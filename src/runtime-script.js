@@ -21,6 +21,8 @@ export function createRuntimeScript() {
       stoppedAt: null,
       events: [],
       nextCommitId: 1,
+      profiles: new Map(),
+      maxProfiles: 10,
     },
     overlay: null,
   };
@@ -118,6 +120,16 @@ export function createRuntimeScript() {
           ? Array.from(state.snapshots.keys()).pop()
           : null;
       }
+    }
+  }
+
+  function pruneProfiles() {
+    while (state.profiler.profiles.size > state.profiler.maxProfiles) {
+      const oldestProfileId = state.profiler.profiles.keys().next().value;
+      if (!oldestProfileId) {
+        break;
+      }
+      state.profiler.profiles.delete(oldestProfileId);
     }
   }
 
@@ -807,6 +819,31 @@ export function createRuntimeScript() {
     };
   }
 
+  function getCurrentProfilerRecord() {
+    return {
+      profileId: state.profiler.profileId,
+      summary: summarizeProfiler(),
+      events: state.profiler.events.slice(),
+    };
+  }
+
+  function storeProfilerRecord(record) {
+    if (!record?.profileId) {
+      return;
+    }
+
+    state.profiler.profiles.set(record.profileId, record);
+    pruneProfiles();
+  }
+
+  function getStoredProfilerRecord(profileId) {
+    if (profileId && profileId === state.profiler.profileId) {
+      return getCurrentProfilerRecord();
+    }
+
+    return state.profiler.profiles.get(profileId) || null;
+  }
+
   function doctor() {
     const tree = peekTree();
     const liveTree = tree.reactDetected ? collectLiveTree() : null;
@@ -832,6 +869,10 @@ export function createRuntimeScript() {
         status: "partial",
         measuresComponentDuration: hasDurationMetrics(liveMeasurementMode),
         tracksChangedFibers: false,
+      },
+      interact: {
+        status: document.body ? "ok" : "failed",
+        hasDocumentBody: Boolean(document.body),
       },
       sourceReveal: {
         status: "failed",
@@ -885,6 +926,17 @@ export function createRuntimeScript() {
       limitations: commonLimitations.snapshot.concat(commonLimitations.inspect, getProfilerLimitations(liveMeasurementMode)),
       runtimeWarnings,
       checks,
+      recommendedWorkflow: [
+        "run tree get to capture a snapshotId",
+        "reuse snapshotId for node search, inspect, highlight, and source reveal",
+        "start profiler before reproducing an interaction",
+        "use profiler commits, commit, ranked, and flamegraph for hotspot analysis",
+      ],
+      unsafeConclusions: [
+        "all matching nodes rerendered solely because they appear in the tree",
+        "component-level timing is available when measurementMode is structural-only",
+        "source reveal is unsupported just because _debugSource is unavailable",
+      ],
     };
   }
 
@@ -922,7 +974,11 @@ export function createRuntimeScript() {
       "state-changed": 0,
       "hooks-changed": 0,
       "context-changed": 0,
+      "parent-render": 0,
     };
+    const propCounts = {};
+    const hookCounts = {};
+    const contextCounts = {};
 
     for (const [nodeId, currentEntry] of Object.entries(currentCommit.nodeMetaById)) {
       const previousEntry = previousNodesByAnalyzer.get(currentEntry.analyzerKey) || null;
@@ -943,6 +999,9 @@ export function createRuntimeScript() {
           reasons.push("props-changed");
           changedPropKeys.push(...propDiffs);
           reasonCounts["props-changed"] += 1;
+          for (const key of propDiffs) {
+            propCounts[key] = (propCounts[key] || 0) + 1;
+          }
         }
 
         if (stableStringify(previousDetails?.state) !== stableStringify(currentDetails?.state)) {
@@ -955,6 +1014,9 @@ export function createRuntimeScript() {
           reasons.push("hooks-changed");
           changedHookIndexes.push(...hookDiffs);
           reasonCounts["hooks-changed"] += 1;
+          for (const index of hookDiffs) {
+            hookCounts[index] = (hookCounts[index] || 0) + 1;
+          }
         }
 
         const contextDiffs = getChangedContextNames(previousDetails?.context, currentDetails?.context);
@@ -962,6 +1024,9 @@ export function createRuntimeScript() {
           reasons.push("context-changed");
           changedContextNames.push(...contextDiffs);
           reasonCounts["context-changed"] += 1;
+          for (const name of contextDiffs) {
+            contextCounts[name] = (contextCounts[name] || 0) + 1;
+          }
         }
       }
 
@@ -1017,6 +1082,34 @@ export function createRuntimeScript() {
     }
 
     for (const node of currentCommit.treeSnapshot.nodes) {
+      const analysis = analysisById[node.id];
+      if (!analysis || analysis.rerenderReasons.length > 0 || !node.parentId) {
+        continue;
+      }
+
+      let ancestorId = node.parentId;
+      while (ancestorId) {
+        if (changedNodeSet.has(ancestorId)) {
+          analysis.rerenderReasons.push("parent-render");
+          analysis.changed = true;
+          changedNodeSet.add(node.id);
+          changedNodeIds.push(node.id);
+          reasonCounts["parent-render"] += 1;
+          break;
+        }
+
+        ancestorId = nodesById[ancestorId]?.parentId || null;
+      }
+    }
+
+    for (const node of currentCommit.treeSnapshot.nodes) {
+      const childIds = childrenById[node.id] || [];
+      const childChangedCount = childIds.reduce((sum, childId) => sum + (changedDescendantCounts[childId] || 0), 0);
+      const selfChangedCount = changedNodeSet.has(node.id) ? 1 : 0;
+      changedDescendantCounts[node.id] = selfChangedCount + childChangedCount;
+    }
+
+    for (const node of currentCommit.treeSnapshot.nodes) {
       if (!changedNodeSet.has(node.id)) {
         continue;
       }
@@ -1034,6 +1127,18 @@ export function createRuntimeScript() {
       changedSubtreeRootIds,
       changedDescendantCounts,
       reasonCounts,
+      topChangedProps: Object.entries(propCounts)
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 10)
+        .map(([key, count]) => ({ key, count })),
+      topChangedHooks: Object.entries(hookCounts)
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 10)
+        .map(([index, count]) => ({ index: Number(index), count })),
+      topChangedContexts: Object.entries(contextCounts)
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 10)
+        .map(([name, count]) => ({ name, count })),
     };
   }
 
@@ -1071,6 +1176,9 @@ export function createRuntimeScript() {
       changedSubtreeRootIds: [],
       changedDescendantCounts: {},
       reasonCounts: {},
+      topChangedProps: [],
+      topChangedHooks: [],
+      topChangedContexts: [],
     };
   }
 
@@ -1093,6 +1201,9 @@ export function createRuntimeScript() {
       unmountedNodeCount: commit.unmountedNodeIds.length,
       changedSubtreeRootCount: commit.changedSubtreeRootIds.length,
       reasonCounts: commit.reasonCounts,
+      topChangedProps: commit.topChangedProps || [],
+      topChangedHooks: commit.topChangedHooks || [],
+      topChangedContexts: commit.topChangedContexts || [],
     };
   }
 
@@ -1161,6 +1272,9 @@ export function createRuntimeScript() {
       unmountedNodeIds: commit.unmountedNodeIds,
       changedSubtreeRootIds: commit.changedSubtreeRootIds,
       changedNodes,
+      topChangedProps: commit.topChangedProps || [],
+      topChangedHooks: commit.topChangedHooks || [],
+      topChangedContexts: commit.topChangedContexts || [],
       safeConclusions: [
         "these nodes changed across adjacent commit snapshots",
         "props/state/hooks/context diffs indicate likely rerender reasons",
@@ -1169,6 +1283,77 @@ export function createRuntimeScript() {
         "all descendants rerendered unless directly indicated by changed node data",
         "duration-based ordering is precise when measurementMode is structural-only",
       ],
+    };
+  }
+
+  function getReasonSummary(reasons) {
+    return (reasons || []).length ? reasons.join(", ") : "unchanged";
+  }
+
+  function getHotspotLabel(item) {
+    if ((item.rerenderReasons || []).includes("mount")) {
+      return "mount-heavy";
+    }
+
+    if ((item.changedDescendantCount || 0) >= 25) {
+      return "broad-update";
+    }
+
+    if ((item.changed || false) && (item.changedDescendantCount || 0) <= 2) {
+      return "leaf-hotspot";
+    }
+
+    return "mixed-update";
+  }
+
+  function getCommitHotspotSummaries(commit) {
+    const nodes = commit.treeSnapshot.nodes.map((node) => {
+      const metrics = commit.nodeMetricsById[node.id] || {};
+      const analysis = commit.nodeAnalysisById[node.id] || { rerenderReasons: [], changed: false };
+      return {
+        id: node.id,
+        displayName: node.displayName,
+        changed: Boolean(analysis.changed),
+        rerenderReasons: analysis.rerenderReasons || [],
+        totalTime: typeof metrics.totalTime === "number" ? metrics.totalTime : null,
+        changedDescendantCount: commit.changedDescendantCounts[node.id] || 0,
+      };
+    });
+
+    const hottestSubtrees = nodes
+      .filter((node) => node.totalTime != null || node.changedDescendantCount > 0)
+      .sort((left, right) => {
+        const rightValue = right.totalTime == null ? right.changedDescendantCount : right.totalTime;
+        const leftValue = left.totalTime == null ? left.changedDescendantCount : left.totalTime;
+        return rightValue - leftValue;
+      })
+      .slice(0, 10)
+      .map((node) => ({
+        id: node.id,
+        displayName: node.displayName,
+        totalTime: node.totalTime,
+        changedDescendantCount: node.changedDescendantCount,
+      }));
+
+    const widestChangedSubtrees = nodes
+      .filter((node) => node.changedDescendantCount > 0)
+      .sort((left, right) => right.changedDescendantCount - left.changedDescendantCount)
+      .slice(0, 10)
+      .map((node) => ({
+        id: node.id,
+        displayName: node.displayName,
+        changedDescendantCount: node.changedDescendantCount,
+      }));
+
+    const mostCommonReasons = Object.entries(commit.reasonCounts || {})
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 10)
+      .map(([reason, count]) => ({ reason, count }));
+
+    return {
+      hottestSubtrees,
+      widestChangedSubtrees,
+      mostCommonReasons,
     };
   }
 
@@ -1198,6 +1383,7 @@ export function createRuntimeScript() {
         totalTime: metrics.totalTime == null ? null : metrics.totalTime,
         changed: Boolean(analysis.changed),
         rerenderReasons: analysis.rerenderReasons || [],
+        reasonSummary: getReasonSummary(analysis.rerenderReasons || []),
         changedDescendantCount: commit.changedDescendantCounts[node.id] || 0,
         matchingConfidence: analysis.matchingConfidence || "low",
       };
@@ -1221,6 +1407,9 @@ export function createRuntimeScript() {
     });
 
     const items = ranked.slice(0, Math.max(1, limit || 20));
+    for (const item of items) {
+      item.hotspotLabel = getHotspotLabel(item);
+    }
     return {
       observationLevel: measurementMode === "actual-duration" ? "observed" : "inferred",
       limitations: getProfilerLimitations(measurementMode).concat(
@@ -1236,6 +1425,7 @@ export function createRuntimeScript() {
         : ["Duration metrics were unavailable for this commit; ranking uses changed subtree breadth"],
       commitId,
       measurementMode,
+      hotspotSummaries: getCommitHotspotSummaries(commit),
       items,
     };
   }
@@ -1259,6 +1449,12 @@ export function createRuntimeScript() {
       changed: Boolean(analysis.changed),
       changedDescendantCount: commit.changedDescendantCounts[nodeId] || 0,
       rerenderReasons: analysis.rerenderReasons || [],
+      reasonSummary: getReasonSummary(analysis.rerenderReasons || []),
+      hotspotLabel: getHotspotLabel({
+        changed: Boolean(analysis.changed),
+        rerenderReasons: analysis.rerenderReasons || [],
+        changedDescendantCount: commit.changedDescendantCounts[nodeId] || 0,
+      }),
       matchingConfidence: analysis.matchingConfidence || "low",
       children: (childrenById[nodeId] || []).map((childId) => buildFlamegraphNode(childId, nodesById, childrenById, commit)),
     };
@@ -1304,6 +1500,7 @@ export function createRuntimeScript() {
         : ["Duration metrics were unavailable for this commit; flamegraph emphasizes changed subtree structure"],
       commitId,
       measurementMode: getCommitMeasurementMode(commit),
+      ...getCommitHotspotSummaries(commit),
       roots: rootNodeIds.map((nodeId) => buildFlamegraphNode(nodeId, nodesById, childrenById, commit)),
     };
   }
@@ -1327,7 +1524,10 @@ export function createRuntimeScript() {
     commit.unmountedNodeIds = diff.unmountedNodeIds;
     commit.changedSubtreeRootIds = diff.changedSubtreeRootIds;
     commit.changedDescendantCounts = diff.changedDescendantCounts;
-    commit.reasonCounts = summarizeReasonCounts(diff.nodeAnalysisById, diff.changedNodeIds);
+    commit.reasonCounts = diff.reasonCounts;
+    commit.topChangedProps = diff.topChangedProps;
+    commit.topChangedHooks = diff.topChangedHooks;
+    commit.topChangedContexts = diff.topChangedContexts;
     state.profiler.events.push(commit);
   }
 
@@ -1381,14 +1581,28 @@ export function createRuntimeScript() {
     stopProfiler() {
       state.profiler.active = false;
       state.profiler.stoppedAt = new Date().toISOString();
-      return summarizeProfiler();
+      const record = getCurrentProfilerRecord();
+      storeProfilerRecord(record);
+      return record.summary;
     },
-    exportProfiler() {
-      return {
-        profileId: state.profiler.profileId,
-        summary: summarizeProfiler(),
-        events: state.profiler.events.slice(),
-      };
+    exportProfiler(profileId) {
+      const record = profileId ? getStoredProfilerRecord(profileId) : getCurrentProfilerRecord();
+      if (!record) {
+        return createRuntimeError(
+          "profile-not-found",
+          "Profile \"" + profileId + "\" is not available in the current profiler history.",
+          { profileId },
+        );
+      }
+      return record;
+    },
+    profilerProfile(profileId) {
+      const record = getStoredProfilerRecord(profileId);
+      return record || createRuntimeError(
+        "profile-not-found",
+        "Profile \"" + profileId + "\" is not available in the current profiler history.",
+        { profileId },
+      );
     },
     profilerCommits: listProfilerCommits,
     profilerCommit: getProfilerCommitDetail,

@@ -87,6 +87,57 @@ run("parseArgv preserves profiler commit positionals and limits", () => {
   assert.equal(parsed.options.limit, 15);
 });
 
+run("parseArgv preserves interact click options", () => {
+  const parsed = parseArgv([
+    "interact",
+    "click",
+    "--session",
+    "app",
+    "--selector",
+    ".result-row",
+    "--timeout-ms",
+    "1200",
+  ]);
+
+  assert.deepEqual(parsed.positionals, ["interact", "click"]);
+  assert.equal(parsed.options.session, "app");
+  assert.equal(parsed.options.selector, ".result-row");
+  assert.equal(parsed.options.timeoutMs, 1200);
+});
+
+run("parseArgv preserves interact type options", () => {
+  const parsed = parseArgv([
+    "interact",
+    "type",
+    "--session",
+    "app",
+    "--selector",
+    "input",
+    "--text",
+    "abc",
+  ]);
+
+  assert.deepEqual(parsed.positionals, ["interact", "type"]);
+  assert.equal(parsed.options.text, "abc");
+});
+
+run("parseArgv preserves profiler compare options", () => {
+  const parsed = parseArgv([
+    "profiler",
+    "compare",
+    "--session",
+    "app",
+    "--left",
+    "profile-a",
+    "--right",
+    "profile-b",
+  ]);
+
+  assert.deepEqual(parsed.positionals, ["profiler", "compare"]);
+  assert.equal(parsed.options.left, "profile-a");
+  assert.equal(parsed.options.right, "profile-b");
+});
+
 run("parseArgv preserves node inspect commit option", () => {
   const parsed = parseArgv([
     "node",

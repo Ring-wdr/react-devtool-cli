@@ -42,6 +42,8 @@ It is a maintenance aid for agents and contributors. It is not a commitment to r
 | `context` | `src/runtime-script.js` | Context dependencies / inspected context values | Derived from fiber dependencies, serialized for CLI use. |
 | `source reveal` | `src/server.js` + `src/runtime-script.js` | View source / inspect source location | Depends on `_debugSource`; may legitimately return `null`. |
 | `profiler` summary/export | `src/runtime-script.js` + `src/cli.js` | Profiler commit data | `rdt` keeps commit-oriented summaries and NDJSON export rather than full DevTools frontend state. |
+| `profiler compare` | `src/cli.js` | No direct public equivalent | CLI-side comparison of stored profiler artifacts or exported NDJSON files. |
+| `interact click|type|press|wait` | `src/server.js` | No direct public equivalent | Playwright-backed deterministic interaction helpers for agent workflows. |
 | `session doctor` | `src/server.js` + `src/runtime-script.js` | No direct public equivalent | CLI-specific preflight that reports trust boundaries, runtime readiness, Playwright resolution diagnostics, and helper import targets. |
 
 ## Intentional Divergences
@@ -50,6 +52,7 @@ It is a maintenance aid for agents and contributors. It is not a commitment to r
 - `rdt` exposes serialized JSON snapshots, not a live DevTools backend/frontend protocol.
 - `inspect` returns a stable snapshot-time payload rather than a live-updating inspected element model.
 - `highlight` and `pick` are implemented as page-side DOM event flows for CLI automation, not frontend UI affordances.
+- `interact` commands are CLI-side Playwright conveniences, not an attempt to expose a general DevTools automation API.
 - `doctor` is CLI-specific and intentionally exposes environment limitations that DevTools frontends normally hide.
 
 ## Field Semantics
@@ -77,6 +80,7 @@ It is a maintenance aid for agents and contributors. It is not a commitment to r
 - Exported NDJSON is commit-oriented event data, not a full DevTools profiler session model.
 - `measurementMode`, `measuresComponentDuration`, and `tracksChangedFibers` are explicit capability flags to prevent over-interpretation.
 - When React exposes `actualDuration`-style metrics, `rdt` surfaces them as optional duration data while still treating changed-node attribution as snapshot-diff inference.
+- `ranked` and `flamegraph` expose CLI hotspot summaries (`reasonSummary`, `hotspotLabel`, `hottestSubtrees`, `widestChangedSubtrees`, `mostCommonReasons`) that have no direct DevTools frontend equivalent.
 
 ## Implementation Guidance
 

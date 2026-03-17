@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
-import { gzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 import path from "node:path";
 import process from "node:process";
 import { randomUUID } from "node:crypto";
@@ -89,6 +89,12 @@ function resolveFormat(options, fallback = "json") {
 
 function collectSnapshotPayload(options) {
   return options.snapshot ? { snapshotId: String(options.snapshot) } : {};
+}
+
+function resolveCommitId(positionals, options, message) {
+  const commitId = positionals[0] ? String(positionals[0]) : (options.commit ? String(options.commit) : null);
+  ensure(commitId, message, { code: "missing-commit-id" });
+  return commitId;
 }
 
 function writeStdout(value, format) {
@@ -229,6 +235,54 @@ async function handleNodeCommand(command, positionals, options) {
   throw new CliError(`Unsupported node command: ${command}`, { code: "unsupported-command" });
 }
 
+async function handleInteractCommand(command, options) {
+  ensure(options.session, "Missing required option --session", { code: "missing-session" });
+
+  if (command === "click") {
+    ensure(options.selector, "Missing required option --selector for `rdt interact click`.", { code: "missing-selector" });
+    const response = await requestSession(options.session, "interact.click", {
+      selector: String(options.selector),
+      timeoutMs: options.timeoutMs ?? undefined,
+    });
+    writeStdout(response.result, resolveFormat(options));
+    return;
+  }
+
+  if (command === "type") {
+    ensure(options.selector, "Missing required option --selector for `rdt interact type`.", { code: "missing-selector" });
+    ensure(options.text !== undefined, "Missing required option --text for `rdt interact type`.", { code: "missing-text" });
+    const response = await requestSession(options.session, "interact.type", {
+      selector: String(options.selector),
+      text: String(options.text),
+      timeoutMs: options.timeoutMs ?? undefined,
+    });
+    writeStdout(response.result, resolveFormat(options));
+    return;
+  }
+
+  if (command === "press") {
+    ensure(options.key, "Missing required option --key for `rdt interact press`.", { code: "missing-key" });
+    const response = await requestSession(options.session, "interact.press", {
+      key: String(options.key),
+      selector: options.selector ? String(options.selector) : undefined,
+      timeoutMs: options.timeoutMs ?? undefined,
+    });
+    writeStdout(response.result, resolveFormat(options));
+    return;
+  }
+
+  if (command === "wait") {
+    ensure(options.ms !== undefined, "Missing required option --ms for `rdt interact wait`.", { code: "missing-ms" });
+    const response = await requestSession(options.session, "interact.wait", {
+      ms: Number(options.ms),
+    });
+    writeStdout(response.result, resolveFormat(options));
+    return;
+  }
+
+  throw new CliError(`Unsupported interact command: ${command}`, { code: "unsupported-command" });
+}
+
 async function writeProfilerExport(sessionName, exported, options) {
   const outputPath = options.output
     ? path.resolve(String(options.output))
@@ -257,6 +311,197 @@ async function writeProfilerExport(sessionName, exported, options) {
     eventCount: exported.events.length,
     compressed: Boolean(options.compress),
     summary: exported.summary,
+  };
+}
+
+function isExistingPath(value) {
+  if (!value) {
+    return false;
+  }
+
+  try {
+    return fs.existsSync(path.resolve(String(value)));
+  } catch {
+    return false;
+  }
+}
+
+async function parseProfilerExportFile(filePath) {
+  const resolvedPath = path.resolve(filePath);
+  const raw = await fsPromises.readFile(resolvedPath);
+  const contents = resolvedPath.endsWith(".gz") ? gunzipSync(raw).toString("utf8") : raw.toString("utf8");
+  const events = [];
+  let profileId = null;
+
+  for (const line of contents.split("\n")) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    const parsed = JSON.parse(line);
+    profileId = profileId || parsed.profileId || null;
+    if (parsed.payload) {
+      events.push(parsed.payload);
+    }
+  }
+
+  return {
+    source: "file",
+    sourceRef: resolvedPath,
+    profileId,
+    events,
+    summary: buildProfilerArtifactSummary(profileId, events),
+  };
+}
+
+function getCommitEvents(events) {
+  return (events || []).filter((event) => event?.eventType === "commit");
+}
+
+function addCount(target, key, amount = 1) {
+  target[key] = (target[key] || 0) + amount;
+}
+
+function getHotspotScore(commit, nodeId) {
+  const metrics = commit.nodeMetricsById?.[nodeId] || {};
+  if (typeof metrics.totalTime === "number") {
+    return metrics.totalTime;
+  }
+  return commit.changedDescendantCounts?.[nodeId] || 0;
+}
+
+function aggregateProfilerEvents(events) {
+  const reasonCounts = {};
+  const propCounts = {};
+  const hookCounts = {};
+  const contextCounts = {};
+  const hotspotScores = {};
+
+  for (const commit of getCommitEvents(events)) {
+    for (const [reason, count] of Object.entries(commit.reasonCounts || {})) {
+      addCount(reasonCounts, reason, count);
+    }
+
+    for (const nodeId of commit.changedNodeIds || []) {
+      const analysis = commit.nodeAnalysisById?.[nodeId] || {};
+      for (const key of analysis.changedPropKeys || []) {
+        addCount(propCounts, key);
+      }
+      for (const index of analysis.changedHookIndexes || []) {
+        addCount(hookCounts, String(index));
+      }
+      for (const name of analysis.changedContextNames || []) {
+        addCount(contextCounts, name);
+      }
+    }
+
+    for (const node of commit.treeSnapshot?.nodes || []) {
+      const displayName = node.displayName || node.tagName || "Anonymous";
+      addCount(hotspotScores, displayName, getHotspotScore(commit, node.id));
+    }
+  }
+
+  return {
+    reasonCounts,
+    topChangedProps: Object.entries(propCounts).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([key, count]) => ({ key, count })),
+    topChangedHooks: Object.entries(hookCounts).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([index, count]) => ({ index: Number(index), count })),
+    topChangedContexts: Object.entries(contextCounts).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([name, count]) => ({ name, count })),
+    topHotspots: Object.entries(hotspotScores).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([displayName, score]) => ({ displayName, score })),
+  };
+}
+
+function buildProfilerArtifactSummary(profileId, events) {
+  const commitEvents = getCommitEvents(events);
+  const nodeCounts = commitEvents.map((event) => event.nodeCount || 0);
+  const totalNodeCount = nodeCounts.reduce((sum, count) => sum + count, 0);
+  const measurementModes = [...new Set(commitEvents.map((event) => event.measurementMode || "structural-only"))];
+  const measurementMode = measurementModes.length === 1 ? (measurementModes[0] || "structural-only") : "mixed";
+
+  return {
+    profileId,
+    commitCount: commitEvents.length,
+    commitIds: commitEvents.map((event) => event.commitId),
+    maxNodeCount: nodeCounts.length ? Math.max(...nodeCounts) : 0,
+    minNodeCount: nodeCounts.length ? Math.min(...nodeCounts) : 0,
+    averageNodeCount: nodeCounts.length ? totalNodeCount / nodeCounts.length : 0,
+    measurementMode,
+    measuresComponentDuration: measurementMode === "actual-duration" || measurementMode === "mixed",
+  };
+}
+
+function diffTopItems(leftItems, rightItems, labelKey) {
+  const leftMap = new Map((leftItems || []).map((item) => [item[labelKey], item.count ?? item.score ?? 0]));
+  const rightMap = new Map((rightItems || []).map((item) => [item[labelKey], item.count ?? item.score ?? 0]));
+  const labels = new Set([...leftMap.keys(), ...rightMap.keys()]);
+  return [...labels]
+    .map((label) => ({
+      [labelKey]: label,
+      left: leftMap.get(label) || 0,
+      right: rightMap.get(label) || 0,
+      delta: (rightMap.get(label) || 0) - (leftMap.get(label) || 0),
+    }))
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, 10);
+}
+
+function compareProfiles(left, right) {
+  const leftAggregates = aggregateProfilerEvents(left.events);
+  const rightAggregates = aggregateProfilerEvents(right.events);
+  const leftSummary = left.summary || buildProfilerArtifactSummary(left.profileId, left.events);
+  const rightSummary = right.summary || buildProfilerArtifactSummary(right.profileId, right.events);
+
+  return {
+    observationLevel: "inferred",
+    limitations: [
+      "profile comparison is derived from previously recorded profiler artifacts",
+      "reason and hotspot deltas are inferred from commit snapshot analysis",
+    ],
+    runtimeWarnings: leftSummary.measurementMode === "structural-only" || rightSummary.measurementMode === "structural-only"
+      ? ["At least one compared profile lacked duration metrics; hotspot deltas may reflect subtree breadth instead of time"]
+      : [],
+    left: {
+      source: left.source,
+      sourceRef: left.sourceRef,
+      summary: leftSummary,
+    },
+    right: {
+      source: right.source,
+      sourceRef: right.sourceRef,
+      summary: rightSummary,
+    },
+    commitCountDelta: rightSummary.commitCount - leftSummary.commitCount,
+    maxNodeCountDelta: rightSummary.maxNodeCount - leftSummary.maxNodeCount,
+    averageNodeCountDelta: rightSummary.averageNodeCount - leftSummary.averageNodeCount,
+    durationAvailability: {
+      left: Boolean(leftSummary.measuresComponentDuration),
+      right: Boolean(rightSummary.measuresComponentDuration),
+    },
+    topReasonDeltas: diffTopItems(
+      Object.entries(leftAggregates.reasonCounts).map(([reason, count]) => ({ reason, count })),
+      Object.entries(rightAggregates.reasonCounts).map(([reason, count]) => ({ reason, count })),
+      "reason",
+    ),
+    topChangedPropDeltas: diffTopItems(leftAggregates.topChangedProps, rightAggregates.topChangedProps, "key"),
+    topChangedHookDeltas: diffTopItems(
+      leftAggregates.topChangedHooks.map((entry) => ({ ...entry, index: String(entry.index) })),
+      rightAggregates.topChangedHooks.map((entry) => ({ ...entry, index: String(entry.index) })),
+      "index",
+    ),
+    topChangedContextDeltas: diffTopItems(leftAggregates.topChangedContexts, rightAggregates.topChangedContexts, "name"),
+    hotspotDeltas: diffTopItems(leftAggregates.topHotspots, rightAggregates.topHotspots, "displayName"),
+  };
+}
+
+async function loadProfilerArtifact(sessionName, reference) {
+  if (isExistingPath(reference)) {
+    return parseProfilerExportFile(reference);
+  }
+
+  const response = await requestSession(sessionName, "profiler.profile", { profileId: reference });
+  return {
+    source: "session",
+    sourceRef: reference,
+    ...response.result,
   };
 }
 
@@ -289,16 +534,14 @@ async function handleProfilerCommand(command, positionals, options) {
   }
 
   if (command === "commit") {
-    const commitId = positionals[0] ? String(positionals[0]) : (options.commit ? String(options.commit) : null);
-    ensure(commitId, "Missing required option --commit for `rdt profiler commit`.", { code: "missing-commit-id" });
+    const commitId = resolveCommitId(positionals, options, "Missing required option --commit for `rdt profiler commit`.");
     const response = await requestSession(options.session, "profiler.commit", { commitId });
     writeStdout(response.result, resolveFormat(options));
     return;
   }
 
   if (command === "ranked") {
-    const commitId = positionals[0] ? String(positionals[0]) : (options.commit ? String(options.commit) : null);
-    ensure(commitId, "Missing required option --commit for `rdt profiler ranked`.", { code: "missing-commit-id" });
+    const commitId = resolveCommitId(positionals, options, "Missing required option --commit for `rdt profiler ranked`.");
     const response = await requestSession(options.session, "profiler.ranked", {
       commitId,
       limit: options.limit ? Number(options.limit) : undefined,
@@ -308,8 +551,7 @@ async function handleProfilerCommand(command, positionals, options) {
   }
 
   if (command === "flamegraph") {
-    const commitId = positionals[0] ? String(positionals[0]) : (options.commit ? String(options.commit) : null);
-    ensure(commitId, "Missing required option --commit for `rdt profiler flamegraph`.", { code: "missing-commit-id" });
+    const commitId = resolveCommitId(positionals, options, "Missing required option --commit for `rdt profiler flamegraph`.");
     const format = resolveFormat(options);
     if (format === "yaml") {
       throw new CliError("YAML is only supported for compact results. Use json or pretty for flamegraph output.", {
@@ -318,6 +560,15 @@ async function handleProfilerCommand(command, positionals, options) {
     }
     const response = await requestSession(options.session, "profiler.flamegraph", { commitId });
     writeStdout(response.result, format);
+    return;
+  }
+
+  if (command === "compare") {
+    ensure(options.left, "Missing required option --left for `rdt profiler compare`.", { code: "missing-left-profile" });
+    ensure(options.right, "Missing required option --right for `rdt profiler compare`.", { code: "missing-right-profile" });
+    const left = await loadProfilerArtifact(options.session, String(options.left));
+    const right = await loadProfilerArtifact(options.session, String(options.right));
+    writeStdout(compareProfiles(left, right), resolveFormat(options));
     return;
   }
 
@@ -373,6 +624,10 @@ Usage:
   rdt node search <query> --session <name> [--snapshot <id>]
   rdt node highlight <id> --session <name> [--snapshot <id>]
   rdt node pick --session <name> [--timeout-ms 30000]
+  rdt interact click --session <name> --selector <css> [--timeout-ms <ms>]
+  rdt interact type --session <name> --selector <css> --text <value> [--timeout-ms <ms>]
+  rdt interact press --session <name> --key <name> [--selector <css>] [--timeout-ms <ms>]
+  rdt interact wait --session <name> --ms <n>
   rdt profiler start --session <name> [--profile-id <id>]
   rdt profiler stop --session <name>
   rdt profiler summary --session <name> [--format json|yaml|pretty]
@@ -380,6 +635,7 @@ Usage:
   rdt profiler commit <id> --session <name> [--format json|yaml|pretty]
   rdt profiler ranked <id> --session <name> [--limit <n>] [--format json|yaml|pretty]
   rdt profiler flamegraph <id> --session <name> [--format json|pretty]
+  rdt profiler compare --session <name> --left <profileId|file> --right <profileId|file> [--format json|yaml|pretty]
   rdt profiler export --session <name> [--output file.jsonl] [--compress]
   rdt source reveal <id> --session <name> [--snapshot <id>]
 
@@ -415,6 +671,9 @@ export async function runCli(argv) {
         return;
       case "node":
         await handleNodeCommand(command, rest, options);
+        return;
+      case "interact":
+        await handleInteractCommand(command, options);
         return;
       case "profiler":
         await handleProfilerCommand(command, rest, options);

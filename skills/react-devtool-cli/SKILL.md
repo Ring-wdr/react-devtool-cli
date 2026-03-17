@@ -1,86 +1,102 @@
-# react-devtool-cli
+---
+name: react-devtool-cli
+description: Maintain and validate the `react-devtool-cli` (`rdt`) repository. Use when working inside this repo to run tests, launch `test-app`, validate `session open|connect|attach|doctor`, inspect snapshot-aware node workflows, exercise profiler commit analysis, or prepare npm packaging and publish checks.
+---
 
-Use this skill when you need to inspect a live React app from an agent through `rdt`.
+# React Devtool CLI
 
-## Architecture
+## Overview
 
-- `rdt` owns Playwright directly through the Node API
-- Prefer `rdt session open` as the default path
-- Use `rdt session connect` for a Playwright `wsEndpoint`
-- Use `rdt session attach` only for Chromium CDP compatibility
+Use this skill to run and validate the `rdt` repository safely and consistently. Prefer repo-local commands (`node bin/rdt.js ...`) over any globally installed `rdt` so the checked-out source stays authoritative.
 
-## Preconditions
+## Default Workflow
 
-- `rdt` is available on `PATH`
-- A Playwright runtime is available through one of:
-  - local `playwright`
-  - local `playwright-core`
-  - global `playwright`
-  - global `playwright-core`
-  - `RDT_PLAYWRIGHT_PATH`
+1. Read [README.md](/Users/kimmanjoong/private-project/rdt-cli/README.md) for current command semantics.
+2. Read [docs/devtools-concept-mapping.md](/Users/kimmanjoong/private-project/rdt-cli/docs/devtools-concept-mapping.md) before changing payload semantics or profiler terminology.
+3. Run `npm test` before and after code changes.
+4. Treat [`test-app`](/Users/kimmanjoong/private-project/rdt-cli/test-app) as the default local validation target.
+5. Keep user-owned working tree changes out of commits unless explicitly requested.
 
-## Recommended flow
+## Run the Repo
 
-1. Start a session with the transport that matches your environment.
+- Run CLI commands from the repo root:
 
 ```bash
-rdt session open --url http://localhost:3000 --session app
+node bin/rdt.js --help
+node bin/rdt.js session doctor --session app
 ```
 
-Use `connect` when you already have a Playwright server endpoint.
+- Start the local React target from [`test-app`](/Users/kimmanjoong/private-project/rdt-cli/test-app):
 
 ```bash
-rdt session connect --ws-endpoint ws://127.0.0.1:3000/ --target-url localhost:3000 --session app
+cd test-app
+npm run dev -- --host 127.0.0.1 --port 3000
 ```
 
-Use `attach` only for Chromium CDP fallback.
+- Open a local Playwright-managed session from the repo root:
 
 ```bash
-rdt session attach --cdp-url http://127.0.0.1:9222 --target-url localhost:3000 --session app
+node bin/rdt.js session open --url http://127.0.0.1:3000 --session app --timeout 10000
 ```
 
-2. Read the tree and find a target component.
+- Use `session attach` only when an external Chromium with CDP is already running.
+
+## Validate Snapshot Workflows
+
+1. Start with `tree get`.
+2. Persist the returned `snapshotId`.
+3. Pass `--snapshot <id>` to `node search`, `node inspect`, `node highlight`, and `source reveal`.
+4. If `snapshot-expired` appears, collect a fresh tree and do not reuse old node IDs.
+
+Example:
 
 ```bash
-rdt tree get --session app
-rdt node search App --session app --snapshot <snapshotId>
+node bin/rdt.js tree get --session app
+node bin/rdt.js node search SlowSearchDemo --session app --snapshot <snapshotId>
+node bin/rdt.js node inspect <nodeId> --session app --snapshot <snapshotId>
 ```
 
-3. Inspect a node in detail.
+## Validate Profiler Workflows
+
+- Use the profiler against [`test-app`](/Users/kimmanjoong/private-project/rdt-cli/test-app), especially `SlowSearchDemo`, `ResultList`, and `ResultRow`.
+- Treat profiler output as commit-oriented analysis with explicit limitations.
+- Use the newer drill-down commands for commit analysis:
 
 ```bash
-rdt node inspect n1 --session app --snapshot <snapshotId>
-rdt source reveal n1 --session app --snapshot <snapshotId>
+node bin/rdt.js profiler start --session app
+node bin/rdt.js profiler stop --session app
+node bin/rdt.js profiler summary --session app
+node bin/rdt.js profiler commits --session app
+node bin/rdt.js profiler commit <commitId> --session app
+node bin/rdt.js profiler ranked <commitId> --session app --limit 10
+node bin/rdt.js profiler flamegraph <commitId> --session app
+node bin/rdt.js node inspect <nodeId> --session app --commit <commitId>
 ```
 
-4. For compact human review, switch output format.
+- Read `measurementMode`, `measuresComponentDuration`, `limitations`, and `runtimeWarnings` literally.
+- Treat rerender reasons as snapshot-diff inference, not changed-fiber truth.
+- Treat `node inspect --commit` node IDs as commit-local profiler IDs, not general tree snapshot IDs.
+
+## Use Doctor Before Complex Validation
+
+- Run `node bin/rdt.js session doctor --session <name>` before relying on helper scripts or profiler conclusions.
+- Use `helperImportTarget` from doctor instead of reading internal installed files to find Playwright.
+- Expect standalone `/tmp/*.mjs` helper scripts to fail bare `import('playwright')` even when `rdt` itself works.
+
+## Package and Publish Checks
+
+- Build publish artifacts with `npm run build`.
+- Confirm packaging with:
 
 ```bash
-rdt profiler summary --session app --format yaml
+npm pack --dry-run
+npm publish --dry-run
 ```
 
-5. For large profiler payloads, export NDJSON instead of YAML.
+- Expect npm packages to ship `dist/` plus required metadata only, not repo-only docs, `test-app`, or handoff artifacts.
 
-```bash
-rdt profiler start --session app
-rdt profiler stop --session app
-rdt profiler export --session app --compress
-```
+## References
 
-6. Close the session when finished.
-
-```bash
-rdt session close --session app
-```
-
-## Rules
-
-- Use `JSON` as the default machine interface.
-- Treat `tree get` as the start of a lookup cycle and persist its `snapshotId`.
-- Prefer explicit `--snapshot <id>` on follow-up node and source commands.
-- If `snapshot-expired` is returned, collect a fresh tree and do not reuse old node IDs.
-- Use [docs/devtools-concept-mapping.md](/Users/kimmanjoong/private-project/rdt-cli/docs/devtools-concept-mapping.md) when you need to compare current payload semantics to official DevTools concepts.
-- Use `YAML` only for compact summaries.
-- Do not request `YAML` for raw profiler export.
-- Prefer `open` over `connect`, and prefer `connect` over `attach`.
-- Do not wrap `rdt` around another CLI subprocess for browser control; `rdt` should speak to Playwright directly.
+- Read [TASK.md](/Users/kimmanjoong/private-project/rdt-cli/TASK.md) only for session handoff or unresolved local work.
+- Read [README.md](/Users/kimmanjoong/private-project/rdt-cli/README.md) for current command examples and trust-boundary guidance.
+- Read [docs/devtools-concept-mapping.md](/Users/kimmanjoong/private-project/rdt-cli/docs/devtools-concept-mapping.md) before renaming or reinterpreting profiler fields.

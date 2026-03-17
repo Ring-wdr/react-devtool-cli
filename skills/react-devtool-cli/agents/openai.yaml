@@ -1,0 +1,4 @@
+interface:
+  display_name: "React Devtool CLI"
+  short_description: "Run and validate the rdt CLI repo"
+  default_prompt: "Use $react-devtool-cli to run, validate, or debug the rdt repository workflows."

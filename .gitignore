@@ -18,3 +18,4 @@ dist/
 
 *.jsonl
 *.jsonl.gz
+.skill-tools/

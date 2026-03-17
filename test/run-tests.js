@@ -71,6 +71,37 @@ run("parseArgv preserves session doctor options", () => {
   assert.equal(parsed.options.format, "pretty");
 });
 
+run("parseArgv preserves profiler commit positionals and limits", () => {
+  const parsed = parseArgv([
+    "profiler",
+    "ranked",
+    "commit-2",
+    "--session",
+    "app",
+    "--limit",
+    "15",
+  ]);
+
+  assert.deepEqual(parsed.positionals, ["profiler", "ranked", "commit-2"]);
+  assert.equal(parsed.options.session, "app");
+  assert.equal(parsed.options.limit, 15);
+});
+
+run("parseArgv preserves node inspect commit option", () => {
+  const parsed = parseArgv([
+    "node",
+    "inspect",
+    "n12",
+    "--session",
+    "app",
+    "--commit",
+    "commit-3",
+  ]);
+
+  assert.deepEqual(parsed.positionals, ["node", "inspect", "n12"]);
+  assert.equal(parsed.options.commit, "commit-3");
+});
+
 run("formatOutput renders JSON", () => {
   const output = formatOutput({ ok: true }, "json");
   assert.match(output, /"ok": true/);

@@ -75,7 +75,8 @@ It is a maintenance aid for agents and contributors. It is not a commitment to r
 
 - `commitCount`, `maxNodeCount`, `minNodeCount`, `averageNodeCount`, `roots` are summary-level CLI metrics.
 - Exported NDJSON is commit-oriented event data, not a full DevTools profiler session model.
-- `measuresComponentDuration` and `tracksChangedFibers` are explicit negative-capability flags to prevent over-interpretation.
+- `measurementMode`, `measuresComponentDuration`, and `tracksChangedFibers` are explicit capability flags to prevent over-interpretation.
+- When React exposes `actualDuration`-style metrics, `rdt` surfaces them as optional duration data while still treating changed-node attribution as snapshot-diff inference.
 
 ## Implementation Guidance
 

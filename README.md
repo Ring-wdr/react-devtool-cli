@@ -162,9 +162,16 @@ Use `node pick` when the agent knows the visible element but not the component n
 - `dom` is the first host element summary used for CLI highlight and DOM-oriented inspection.
 - Profiler summary fields are commit-oriented CLI metrics, not the full DevTools profiler session schema.
 - `profiler summary` and exported summaries explicitly report:
-  - `measuresComponentDuration: false`
+  - `measurementMode: "actual-duration" | "structural-only" | "mixed"`
+  - `measuresComponentDuration`
   - `tracksChangedFibers: false`
   - `nodeCountMeaning: "live-tree-size-at-commit"`
+- New profiler drill-down commands:
+  - `rdt profiler commits --session <name>`
+  - `rdt profiler commit <commitId> --session <name>`
+  - `rdt profiler ranked <commitId> --session <name> [--limit <n>]`
+  - `rdt profiler flamegraph <commitId> --session <name>`
+- `node inspect --commit <commitId>` expects a node id from that commit's profiler views, not from a separate `tree get` snapshot.
 
 ## Concept Alignment
 

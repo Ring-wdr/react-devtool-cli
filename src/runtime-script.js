@@ -20,6 +20,7 @@ export function createRuntimeScript() {
       startedAt: null,
       stoppedAt: null,
       events: [],
+      nextCommitId: 1,
     },
     overlay: null,
   };
@@ -36,10 +37,21 @@ export function createRuntimeScript() {
     ],
     profiler: [
       "nodeCount is live tree size at commit, not changed fiber count",
-      "component durations are not measured",
       "commit data does not prove which components rerendered",
     ],
   };
+
+  function hasDurationMetrics(measurementMode) {
+    return measurementMode === "actual-duration" || measurementMode === "mixed";
+  }
+
+  function getProfilerLimitations(measurementMode) {
+    const limitations = commonLimitations.profiler.slice();
+    if (!hasDurationMetrics(measurementMode)) {
+      limitations.splice(1, 0, "component durations are not measured");
+    }
+    return limitations;
+  }
 
   function createRuntimeError(code, message, details) {
     return {
@@ -153,6 +165,70 @@ export function createRuntimeScript() {
     return output;
   }
 
+  function stableStringify(value) {
+    if (value == null || typeof value !== "object") {
+      return JSON.stringify(value);
+    }
+
+    if (Array.isArray(value)) {
+      return "[" + value.map((item) => stableStringify(item)).join(",") + "]";
+    }
+
+    const keys = Object.keys(value).sort();
+    return "{" + keys.map((key) => JSON.stringify(key) + ":" + stableStringify(value[key])).join(",") + "}";
+  }
+
+  function getTopLevelDiffKeys(previous, next) {
+    const prev = previous && typeof previous === "object" && !Array.isArray(previous) ? previous : {};
+    const curr = next && typeof next === "object" && !Array.isArray(next) ? next : {};
+    const keys = new Set(Object.keys(prev).concat(Object.keys(curr)));
+    const changed = [];
+
+    for (const key of keys) {
+      if (stableStringify(prev[key]) !== stableStringify(curr[key])) {
+        changed.push(key);
+      }
+    }
+
+    return changed;
+  }
+
+  function getChangedHookIndexes(previous, next) {
+    const prev = Array.isArray(previous) ? previous : [];
+    const curr = Array.isArray(next) ? next : [];
+    const length = Math.max(prev.length, curr.length);
+    const changed = [];
+
+    for (let index = 0; index < length; index += 1) {
+      if (stableStringify(prev[index] || null) !== stableStringify(curr[index] || null)) {
+        changed.push(index);
+      }
+    }
+
+    return changed;
+  }
+
+  function getChangedContextNames(previous, next) {
+    const prev = Array.isArray(previous) ? previous : [];
+    const curr = Array.isArray(next) ? next : [];
+    const changed = [];
+    const length = Math.max(prev.length, curr.length);
+
+    for (let index = 0; index < length; index += 1) {
+      const prevEntry = prev[index] || null;
+      const currEntry = curr[index] || null;
+      if (stableStringify(prevEntry) !== stableStringify(currEntry)) {
+        changed.push(
+          currEntry?.displayName ||
+          prevEntry?.displayName ||
+          "Context",
+        );
+      }
+    }
+
+    return changed;
+  }
+
   function getDisplayName(fiber) {
     if (!fiber) {
       return null;
@@ -226,6 +302,20 @@ export function createRuntimeScript() {
     }
 
     return contexts;
+  }
+
+  function getDurationMetrics(fiber) {
+    const actualDuration = typeof fiber?.actualDuration === "number" ? fiber.actualDuration : null;
+    const actualStartTime = typeof fiber?.actualStartTime === "number" ? fiber.actualStartTime : null;
+    const treeBaseDuration = typeof fiber?.treeBaseDuration === "number" ? fiber.treeBaseDuration : null;
+
+    return {
+      actualDuration,
+      actualStartTime,
+      treeBaseDuration,
+      totalTime: actualDuration,
+      selfTime: actualDuration,
+    };
   }
 
   function findHostDescendant(fiber) {
@@ -309,18 +399,64 @@ export function createRuntimeScript() {
     };
   }
 
-  function traverseFiberTree(fiber, parentId, depth, rootId, output, nodeDetails) {
+  function traverseFiberTree(fiber, parentId, depth, rootId, output, nodeDetails, nodeMetrics, nodeMeta, parentAnalyzerKey) {
     let current = fiber;
+    let siblingIndex = 0;
+
     while (current) {
       const node = buildNodeRecord(current, parentId, depth, rootId);
+      const analyzerKey = [
+        rootId,
+        parentAnalyzerKey || "root",
+        node.displayName || "Anonymous",
+        node.key || "",
+        node.tagName,
+        siblingIndex,
+      ].join("|");
       output.push(node);
       nodeDetails.set(node.id, buildNodeDetails(current, node));
+      nodeMetrics.set(node.id, getDurationMetrics(current));
+      nodeMeta.set(node.id, {
+        analyzerKey,
+        parentAnalyzerKey: parentAnalyzerKey || null,
+      });
 
       if (current.child) {
-        traverseFiberTree(current.child, node.id, depth + 1, rootId, output, nodeDetails);
+        traverseFiberTree(current.child, node.id, depth + 1, rootId, output, nodeDetails, nodeMetrics, nodeMeta, analyzerKey);
       }
 
       current = current.sibling;
+      siblingIndex += 1;
+    }
+  }
+
+  function finalizeNodeMetrics(nodes, nodeMetrics) {
+    const childrenById = new Map();
+    for (const node of nodes) {
+      if (!childrenById.has(node.id)) {
+        childrenById.set(node.id, []);
+      }
+      if (node.parentId) {
+        const siblings = childrenById.get(node.parentId) || [];
+        siblings.push(node.id);
+        childrenById.set(node.parentId, siblings);
+      }
+    }
+
+    const nodesByDepth = nodes.slice().sort((left, right) => right.depth - left.depth);
+    for (const node of nodesByDepth) {
+      const metrics = nodeMetrics.get(node.id);
+      if (!metrics || typeof metrics.totalTime !== "number") {
+        continue;
+      }
+
+      const childIds = childrenById.get(node.id) || [];
+      const childTotal = childIds.reduce((sum, childId) => {
+        const childMetrics = nodeMetrics.get(childId);
+        return sum + (typeof childMetrics?.totalTime === "number" ? childMetrics.totalTime : 0);
+      }, 0);
+
+      metrics.selfTime = Math.max(0, metrics.totalTime - childTotal);
     }
   }
 
@@ -328,6 +464,8 @@ export function createRuntimeScript() {
     const roots = [];
     const nodes = [];
     const nodeDetails = new Map();
+    const nodeMetrics = new Map();
+    const nodeMeta = new Map();
 
     for (const entry of state.roots.values()) {
       const root = entry.root;
@@ -342,8 +480,10 @@ export function createRuntimeScript() {
         nodeId: getFiberId(current.child),
       });
 
-      traverseFiberTree(current.child, null, 0, entry.rootId, nodes, nodeDetails);
+      traverseFiberTree(current.child, null, 0, entry.rootId, nodes, nodeDetails, nodeMetrics, nodeMeta, null);
     }
+
+    finalizeNodeMetrics(nodes, nodeMetrics);
 
     return {
       generatedAt: new Date().toISOString(),
@@ -352,6 +492,8 @@ export function createRuntimeScript() {
       nodes,
       selectedNodeId: null,
       nodeDetails,
+      nodeMetrics,
+      nodeMeta,
     };
   }
 
@@ -389,6 +531,18 @@ export function createRuntimeScript() {
           },
         ]),
       ),
+      nodeMetrics: new Map(Array.from(tree.nodeMetrics.entries(), ([nodeId, metrics]) => [
+        nodeId,
+        {
+          ...metrics,
+        },
+      ])),
+      nodeMeta: new Map(Array.from(tree.nodeMeta.entries(), ([nodeId, meta]) => [
+        nodeId,
+        {
+          ...meta,
+        },
+      ])),
     };
 
     state.snapshots.set(snapshot.snapshotId, snapshot);
@@ -461,7 +615,34 @@ export function createRuntimeScript() {
     return state.snapshots.get(snapshot.snapshotId) || null;
   }
 
-  function inspectNode(nodeId, snapshotId) {
+  function getProfilerCommit(commitId) {
+    return state.profiler.events.find((event) => event.eventType === "commit" && event.commitId === commitId) || null;
+  }
+
+  function inspectNode(nodeId, snapshotId, commitId) {
+    if (commitId) {
+      const commit = getProfilerCommit(commitId);
+      if (!commit) {
+        return createRuntimeError(
+          "commit-not-found",
+          "Commit \"" + commitId + "\" is not available in the current profiler buffer.",
+          { commitId },
+        );
+      }
+
+      const details = commit.nodeDetailsById[nodeId];
+      if (!details) {
+        return null;
+      }
+
+      return {
+        ...details,
+        commitId,
+        profiler: commit.nodeAnalysisById[nodeId] || null,
+        metrics: commit.nodeMetricsById[nodeId] || null,
+      };
+    }
+
     const snapshot = resolveSnapshot(snapshotId);
     if (snapshot?.__rdtError) {
       return snapshot;
@@ -591,21 +772,26 @@ export function createRuntimeScript() {
     const commitEvents = state.profiler.events.filter((event) => event.eventType === "commit");
     const nodeCounts = commitEvents.map((event) => event.nodeCount);
     const totalNodeCount = nodeCounts.reduce((sum, count) => sum + count, 0);
+    const measurementModes = [...new Set(commitEvents.map((event) => event.measurementMode || "structural-only"))];
 
+    const measurementMode = measurementModes.length === 1 ? measurementModes[0] : "mixed";
+    const measuresComponentDuration = hasDurationMetrics(measurementMode);
     return {
       observationLevel: "observed",
-      limitations: commonLimitations.profiler.slice(),
+      limitations: getProfilerLimitations(measurementMode),
       runtimeWarnings: state.profiler.active ? [] : ["Profiler data is commit-oriented only; use inspect/tree snapshots for follow-up analysis"],
       profileId: state.profiler.profileId,
       active: state.profiler.active,
       startedAt: state.profiler.startedAt,
       stoppedAt: state.profiler.stoppedAt,
       commitCount: commitEvents.length,
+      commitIds: commitEvents.map((event) => event.commitId),
       maxNodeCount: nodeCounts.length ? Math.max(...nodeCounts) : 0,
       minNodeCount: nodeCounts.length ? Math.min(...nodeCounts) : 0,
       averageNodeCount: nodeCounts.length ? totalNodeCount / nodeCounts.length : 0,
       roots: [...new Set(commitEvents.map((event) => event.rootId))],
-      measuresComponentDuration: false,
+      measurementMode,
+      measuresComponentDuration,
       tracksChangedFibers: false,
       nodeCountMeaning: "live-tree-size-at-commit",
       safeConclusions: [
@@ -623,6 +809,10 @@ export function createRuntimeScript() {
 
   function doctor() {
     const tree = peekTree();
+    const liveTree = tree.reactDetected ? collectLiveTree() : null;
+    const liveMeasurementMode = liveTree && Array.from(liveTree.nodeMetrics.values()).some((metrics) => typeof metrics.actualDuration === "number")
+      ? "actual-duration"
+      : "structural-only";
     const checks = {
       reactRuntime: {
         status: tree.reactDetected ? "ok" : "failed",
@@ -640,7 +830,7 @@ export function createRuntimeScript() {
       },
       profiler: {
         status: "partial",
-        measuresComponentDuration: false,
+        measuresComponentDuration: hasDurationMetrics(liveMeasurementMode),
         tracksChangedFibers: false,
       },
       sourceReveal: {
@@ -655,7 +845,7 @@ export function createRuntimeScript() {
       return {
         status: "failed",
         observationLevel: "observed",
-        limitations: commonLimitations.snapshot.concat(commonLimitations.inspect, commonLimitations.profiler),
+        limitations: commonLimitations.snapshot.concat(commonLimitations.inspect, getProfilerLimitations(liveMeasurementMode)),
         runtimeWarnings,
         checks,
       };
@@ -683,14 +873,438 @@ export function createRuntimeScript() {
       }
     }
 
-    runtimeWarnings.push("Profiler is commit-oriented only; it does not track changed fibers or component durations");
+    runtimeWarnings.push(
+      hasDurationMetrics(liveMeasurementMode)
+        ? "Profiler records component duration metrics when the current React runtime exposes them, but changed-fiber attribution is still inferred from commit snapshots"
+        : "Profiler is commit-oriented only; it does not track changed fibers or component durations",
+    );
 
     return {
       status: runtimeWarnings.length ? "partial" : "ok",
       observationLevel: "observed",
-      limitations: commonLimitations.snapshot.concat(commonLimitations.inspect, commonLimitations.profiler),
+      limitations: commonLimitations.snapshot.concat(commonLimitations.inspect, getProfilerLimitations(liveMeasurementMode)),
       runtimeWarnings,
       checks,
+    };
+  }
+
+  function buildCommitDiff(previousCommit, currentCommit) {
+    const previousNodesByAnalyzer = new Map();
+    if (previousCommit) {
+      for (const [nodeId, meta] of Object.entries(previousCommit.nodeMetaById)) {
+        previousNodesByAnalyzer.set(meta.analyzerKey, {
+          nodeId,
+          meta,
+          details: previousCommit.nodeDetailsById[nodeId],
+          metrics: previousCommit.nodeMetricsById[nodeId],
+        });
+      }
+    }
+
+    const currentNodesByAnalyzer = new Map();
+    for (const [nodeId, meta] of Object.entries(currentCommit.nodeMetaById)) {
+      currentNodesByAnalyzer.set(meta.analyzerKey, {
+        nodeId,
+        meta,
+        details: currentCommit.nodeDetailsById[nodeId],
+        metrics: currentCommit.nodeMetricsById[nodeId],
+      });
+    }
+
+    const analysisById = {};
+    const mountedNodeIds = [];
+    const unmountedNodeIds = [];
+    const changedNodeIds = [];
+    const reasonCounts = {
+      mount: 0,
+      unmount: 0,
+      "props-changed": 0,
+      "state-changed": 0,
+      "hooks-changed": 0,
+      "context-changed": 0,
+    };
+
+    for (const [nodeId, currentEntry] of Object.entries(currentCommit.nodeMetaById)) {
+      const previousEntry = previousNodesByAnalyzer.get(currentEntry.analyzerKey) || null;
+      const currentDetails = currentCommit.nodeDetailsById[nodeId];
+      const reasons = [];
+      const changedPropKeys = [];
+      const changedHookIndexes = [];
+      const changedContextNames = [];
+
+      if (!previousEntry) {
+        reasons.push("mount");
+        mountedNodeIds.push(nodeId);
+        reasonCounts.mount += 1;
+      } else {
+        const previousDetails = previousEntry.details;
+        const propDiffs = getTopLevelDiffKeys(previousDetails?.props, currentDetails?.props);
+        if (propDiffs.length) {
+          reasons.push("props-changed");
+          changedPropKeys.push(...propDiffs);
+          reasonCounts["props-changed"] += 1;
+        }
+
+        if (stableStringify(previousDetails?.state) !== stableStringify(currentDetails?.state)) {
+          reasons.push("state-changed");
+          reasonCounts["state-changed"] += 1;
+        }
+
+        const hookDiffs = getChangedHookIndexes(previousDetails?.hooks, currentDetails?.hooks);
+        if (hookDiffs.length) {
+          reasons.push("hooks-changed");
+          changedHookIndexes.push(...hookDiffs);
+          reasonCounts["hooks-changed"] += 1;
+        }
+
+        const contextDiffs = getChangedContextNames(previousDetails?.context, currentDetails?.context);
+        if (contextDiffs.length) {
+          reasons.push("context-changed");
+          changedContextNames.push(...contextDiffs);
+          reasonCounts["context-changed"] += 1;
+        }
+      }
+
+      const changed = reasons.length > 0;
+      if (changed) {
+        changedNodeIds.push(nodeId);
+      }
+
+      analysisById[nodeId] = {
+        commitId: currentCommit.commitId,
+        nodeId,
+        changed,
+        rerenderReasons: reasons,
+        changedPropKeys,
+        changedHookIndexes,
+        changedContextNames,
+        matchingConfidence: previousEntry ? "high" : "medium",
+      };
+    }
+
+    if (previousCommit) {
+      for (const [nodeId, previousMeta] of Object.entries(previousCommit.nodeMetaById)) {
+        if (!currentNodesByAnalyzer.has(previousMeta.analyzerKey)) {
+          unmountedNodeIds.push(nodeId);
+          reasonCounts.unmount += 1;
+        }
+      }
+    }
+
+    const changedNodeSet = new Set(changedNodeIds);
+    const changedDescendantCounts = {};
+    const changedSubtreeRootIds = [];
+    const childrenById = {};
+    const nodesById = {};
+
+    for (const node of currentCommit.treeSnapshot.nodes) {
+      nodesById[node.id] = node;
+      if (!childrenById[node.id]) {
+        childrenById[node.id] = [];
+      }
+      if (node.parentId) {
+        childrenById[node.parentId] = childrenById[node.parentId] || [];
+        childrenById[node.parentId].push(node.id);
+      }
+    }
+
+    const nodesByDepth = currentCommit.treeSnapshot.nodes.slice().sort((left, right) => right.depth - left.depth);
+    for (const node of nodesByDepth) {
+      const childIds = childrenById[node.id] || [];
+      const childChangedCount = childIds.reduce((sum, childId) => sum + (changedDescendantCounts[childId] || 0), 0);
+      const selfChangedCount = changedNodeSet.has(node.id) ? 1 : 0;
+      changedDescendantCounts[node.id] = selfChangedCount + childChangedCount;
+    }
+
+    for (const node of currentCommit.treeSnapshot.nodes) {
+      if (!changedNodeSet.has(node.id)) {
+        continue;
+      }
+
+      if (!node.parentId || !changedNodeSet.has(node.parentId)) {
+        changedSubtreeRootIds.push(node.id);
+      }
+    }
+
+    return {
+      nodeAnalysisById: analysisById,
+      changedNodeIds,
+      mountedNodeIds,
+      unmountedNodeIds,
+      changedSubtreeRootIds,
+      changedDescendantCounts,
+      reasonCounts,
+    };
+  }
+
+  function serializeMap(map) {
+    return Object.fromEntries(Array.from(map.entries()));
+  }
+
+  function buildCommitEvent(rendererId, rootState, priorityLevel, liveTree) {
+    const commitId = "commit-" + state.profiler.nextCommitId++;
+    const measurementMode = Array.from(liveTree.nodeMetrics.values()).some((metrics) => typeof metrics.actualDuration === "number")
+      ? "actual-duration"
+      : "structural-only";
+
+    return {
+      eventType: "commit",
+      commitId,
+      timestamp: new Date().toISOString(),
+      rootId: rootState.rootId,
+      rendererId,
+      priorityLevel: priorityLevel == null ? null : priorityLevel,
+      nodeCount: liveTree.nodes.length,
+      measurementMode,
+      treeSnapshot: {
+        roots: liveTree.roots,
+        nodes: liveTree.nodes,
+        generatedAt: liveTree.generatedAt,
+      },
+      nodeDetailsById: serializeMap(liveTree.nodeDetails),
+      nodeMetricsById: serializeMap(liveTree.nodeMetrics),
+      nodeMetaById: serializeMap(liveTree.nodeMeta),
+      nodeAnalysisById: {},
+      changedNodeIds: [],
+      mountedNodeIds: [],
+      unmountedNodeIds: [],
+      changedSubtreeRootIds: [],
+      changedDescendantCounts: {},
+      reasonCounts: {},
+    };
+  }
+
+  function getCommitMeasurementMode(commit) {
+    return commit?.measurementMode || "structural-only";
+  }
+
+  function getCommitSummary(commit) {
+    const changedNodeCount = commit.changedNodeIds.length;
+    return {
+      commitId: commit.commitId,
+      timestamp: commit.timestamp,
+      rootId: commit.rootId,
+      rendererId: commit.rendererId,
+      priorityLevel: commit.priorityLevel,
+      nodeCount: commit.nodeCount,
+      measurementMode: getCommitMeasurementMode(commit),
+      changedNodeCount,
+      mountedNodeCount: commit.mountedNodeIds.length,
+      unmountedNodeCount: commit.unmountedNodeIds.length,
+      changedSubtreeRootCount: commit.changedSubtreeRootIds.length,
+      reasonCounts: commit.reasonCounts,
+    };
+  }
+
+  function listProfilerCommits() {
+    return state.profiler.events
+      .filter((event) => event.eventType === "commit")
+      .map((commit) => ({
+        observationLevel: "inferred",
+        limitations: getProfilerLimitations(getCommitMeasurementMode(commit)).concat([
+          "changed nodes and rerender reasons are inferred from commit snapshot diffs",
+        ]),
+        runtimeWarnings: getCommitMeasurementMode(commit) === "actual-duration"
+          ? []
+          : ["Duration metrics were unavailable for this commit; ranked views use structural fallbacks"],
+        ...getCommitSummary(commit),
+      }));
+  }
+
+  function summarizeReasonCounts(analysisById, changedNodeIds) {
+    const counts = {};
+    for (const nodeId of changedNodeIds) {
+      const reasons = analysisById[nodeId]?.rerenderReasons || [];
+      for (const reason of reasons) {
+        counts[reason] = (counts[reason] || 0) + 1;
+      }
+    }
+    return counts;
+  }
+
+  function getProfilerCommitDetail(commitId) {
+    const commit = getProfilerCommit(commitId);
+    if (!commit) {
+      return createRuntimeError(
+        "commit-not-found",
+        "Commit \"" + commitId + "\" is not available in the current profiler buffer.",
+        { commitId },
+      );
+    }
+
+    const changedNodes = commit.changedNodeIds.map((nodeId) => {
+      const node = commit.treeSnapshot.nodes.find((entry) => entry.id === nodeId);
+      return {
+        id: nodeId,
+        displayName: node?.displayName || null,
+        depth: node?.depth ?? null,
+        reasons: commit.nodeAnalysisById[nodeId]?.rerenderReasons || [],
+        changedPropKeys: commit.nodeAnalysisById[nodeId]?.changedPropKeys || [],
+        changedHookIndexes: commit.nodeAnalysisById[nodeId]?.changedHookIndexes || [],
+        changedContextNames: commit.nodeAnalysisById[nodeId]?.changedContextNames || [],
+        metrics: commit.nodeMetricsById[nodeId] || null,
+        changedDescendantCount: commit.changedDescendantCounts[nodeId] || 0,
+      };
+    });
+
+    return {
+      observationLevel: "inferred",
+      limitations: getProfilerLimitations(getCommitMeasurementMode(commit)).concat([
+        "changed nodes and rerender reasons are inferred from commit snapshot diffs",
+      ]),
+      runtimeWarnings: getCommitMeasurementMode(commit) === "actual-duration"
+        ? []
+        : ["Duration metrics were unavailable for this commit; subtree ranking uses structural fallbacks"],
+      ...getCommitSummary(commit),
+      changedNodeIds: commit.changedNodeIds,
+      mountedNodeIds: commit.mountedNodeIds,
+      unmountedNodeIds: commit.unmountedNodeIds,
+      changedSubtreeRootIds: commit.changedSubtreeRootIds,
+      changedNodes,
+      safeConclusions: [
+        "these nodes changed across adjacent commit snapshots",
+        "props/state/hooks/context diffs indicate likely rerender reasons",
+      ],
+      unsafeConclusions: [
+        "all descendants rerendered unless directly indicated by changed node data",
+        "duration-based ordering is precise when measurementMode is structural-only",
+      ],
+    };
+  }
+
+  function rankProfilerCommit(commitId, limit) {
+    const commit = getProfilerCommit(commitId);
+    if (!commit) {
+      return createRuntimeError(
+        "commit-not-found",
+        "Commit \"" + commitId + "\" is not available in the current profiler buffer.",
+        { commitId },
+      );
+    }
+
+    const ranked = commit.treeSnapshot.nodes.map((node) => {
+      const metrics = commit.nodeMetricsById[node.id] || {};
+      const analysis = commit.nodeAnalysisById[node.id] || {
+        rerenderReasons: [],
+        matchingConfidence: "low",
+      };
+      return {
+        commitId,
+        id: node.id,
+        displayName: node.displayName,
+        depth: node.depth,
+        tagName: node.tagName,
+        selfTime: metrics.selfTime == null ? null : metrics.selfTime,
+        totalTime: metrics.totalTime == null ? null : metrics.totalTime,
+        changed: Boolean(analysis.changed),
+        rerenderReasons: analysis.rerenderReasons || [],
+        changedDescendantCount: commit.changedDescendantCounts[node.id] || 0,
+        matchingConfidence: analysis.matchingConfidence || "low",
+      };
+    });
+
+    const measurementMode = getCommitMeasurementMode(commit);
+    ranked.sort((left, right) => {
+      if (measurementMode === "actual-duration") {
+        const rightDuration = typeof right.totalTime === "number" ? right.totalTime : -1;
+        const leftDuration = typeof left.totalTime === "number" ? left.totalTime : -1;
+        if (rightDuration !== leftDuration) {
+          return rightDuration - leftDuration;
+        }
+      }
+
+      if (right.changedDescendantCount !== left.changedDescendantCount) {
+        return right.changedDescendantCount - left.changedDescendantCount;
+      }
+
+      return left.depth - right.depth;
+    });
+
+    const items = ranked.slice(0, Math.max(1, limit || 20));
+    return {
+      observationLevel: measurementMode === "actual-duration" ? "observed" : "inferred",
+      limitations: getProfilerLimitations(measurementMode).concat(
+        measurementMode === "actual-duration"
+          ? ["changed nodes and rerender reasons are inferred from commit snapshot diffs"]
+          : [
+              "duration metrics were unavailable; ranking falls back to changed subtree breadth",
+              "changed nodes and rerender reasons are inferred from commit snapshot diffs",
+            ],
+      ),
+      runtimeWarnings: measurementMode === "actual-duration"
+        ? []
+        : ["Duration metrics were unavailable for this commit; ranking uses changed subtree breadth"],
+      commitId,
+      measurementMode,
+      items,
+    };
+  }
+
+  function buildFlamegraphNode(nodeId, nodesById, childrenById, commit) {
+    const node = nodesById[nodeId];
+    const metrics = commit.nodeMetricsById[nodeId] || {};
+    const analysis = commit.nodeAnalysisById[nodeId] || {
+      rerenderReasons: [],
+      changed: false,
+      matchingConfidence: "low",
+    };
+
+    return {
+      id: node.id,
+      displayName: node.displayName,
+      depth: node.depth,
+      tagName: node.tagName,
+      selfTime: metrics.selfTime == null ? null : metrics.selfTime,
+      totalTime: metrics.totalTime == null ? null : metrics.totalTime,
+      changed: Boolean(analysis.changed),
+      changedDescendantCount: commit.changedDescendantCounts[nodeId] || 0,
+      rerenderReasons: analysis.rerenderReasons || [],
+      matchingConfidence: analysis.matchingConfidence || "low",
+      children: (childrenById[nodeId] || []).map((childId) => buildFlamegraphNode(childId, nodesById, childrenById, commit)),
+    };
+  }
+
+  function flamegraphProfilerCommit(commitId) {
+    const commit = getProfilerCommit(commitId);
+    if (!commit) {
+      return createRuntimeError(
+        "commit-not-found",
+        "Commit \"" + commitId + "\" is not available in the current profiler buffer.",
+        { commitId },
+      );
+    }
+
+    const nodesById = {};
+    const childrenById = {};
+    const rootNodeIds = [];
+
+    for (const node of commit.treeSnapshot.nodes) {
+      nodesById[node.id] = node;
+      childrenById[node.id] = childrenById[node.id] || [];
+      if (node.parentId) {
+        childrenById[node.parentId] = childrenById[node.parentId] || [];
+        childrenById[node.parentId].push(node.id);
+      } else {
+        rootNodeIds.push(node.id);
+      }
+    }
+
+    return {
+      observationLevel: getCommitMeasurementMode(commit) === "actual-duration" ? "observed" : "inferred",
+      limitations: getProfilerLimitations(getCommitMeasurementMode(commit)).concat(
+        getCommitMeasurementMode(commit) === "actual-duration"
+          ? ["changed nodes and rerender reasons are inferred from commit snapshot diffs"]
+          : [
+              "duration metrics were unavailable; flamegraph timings fall back to null values",
+              "changed nodes and rerender reasons are inferred from commit snapshot diffs",
+            ],
+      ),
+      runtimeWarnings: getCommitMeasurementMode(commit) === "actual-duration"
+        ? []
+        : ["Duration metrics were unavailable for this commit; flamegraph emphasizes changed subtree structure"],
+      commitId,
+      measurementMode: getCommitMeasurementMode(commit),
+      roots: rootNodeIds.map((nodeId) => buildFlamegraphNode(nodeId, nodesById, childrenById, commit)),
     };
   }
 
@@ -704,14 +1318,17 @@ export function createRuntimeScript() {
     }
 
     const liveTree = collectLiveTree();
-    state.profiler.events.push({
-      eventType: "commit",
-      timestamp: new Date().toISOString(),
-      rootId: rootState.rootId,
-      rendererId,
-      priorityLevel: priorityLevel == null ? null : priorityLevel,
-      nodeCount: liveTree.nodes.length,
-    });
+    const commit = buildCommitEvent(rendererId, rootState, priorityLevel, liveTree);
+    const previousCommit = state.profiler.events.filter((event) => event.eventType === "commit").slice(-1)[0] || null;
+    const diff = buildCommitDiff(previousCommit, commit);
+    commit.nodeAnalysisById = diff.nodeAnalysisById;
+    commit.changedNodeIds = diff.changedNodeIds;
+    commit.mountedNodeIds = diff.mountedNodeIds;
+    commit.unmountedNodeIds = diff.unmountedNodeIds;
+    commit.changedSubtreeRootIds = diff.changedSubtreeRootIds;
+    commit.changedDescendantCounts = diff.changedDescendantCounts;
+    commit.reasonCounts = summarizeReasonCounts(diff.nodeAnalysisById, diff.changedNodeIds);
+    state.profiler.events.push(commit);
   }
 
   const hook = window.__REACT_DEVTOOLS_GLOBAL_HOOK__ || {};
@@ -758,6 +1375,7 @@ export function createRuntimeScript() {
       state.profiler.startedAt = new Date().toISOString();
       state.profiler.stoppedAt = null;
       state.profiler.events = [];
+      state.profiler.nextCommitId = 1;
       return summarizeProfiler();
     },
     stopProfiler() {
@@ -772,6 +1390,10 @@ export function createRuntimeScript() {
         events: state.profiler.events.slice(),
       };
     },
+    profilerCommits: listProfilerCommits,
+    profilerCommit: getProfilerCommitDetail,
+    profilerRanked: rankProfilerCommit,
+    profilerFlamegraph: flamegraphProfilerCommit,
     profilerSummary: summarizeProfiler,
     doctor,
   };

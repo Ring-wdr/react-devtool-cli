@@ -608,7 +608,7 @@ class SessionServer {
       case "node.inspect":
         await this.ensureReactDetected();
         return unwrapRuntimeResult(await this.page.evaluate(
-          ({ nodeId, snapshotId }) => window.__RDT_CLI_RUNTIME__.inspectNode(nodeId, snapshotId),
+          ({ nodeId, snapshotId, commitId }) => window.__RDT_CLI_RUNTIME__.inspectNode(nodeId, snapshotId, commitId),
           payload,
         ));
       case "node.search":
@@ -638,10 +638,31 @@ class SessionServer {
       case "profiler.summary":
         await this.ensureReactDetected();
         return this.page.evaluate(() => window.__RDT_CLI_RUNTIME__.profilerSummary());
+      case "profiler.commits":
+        await this.ensureReactDetected();
+        return this.page.evaluate(() => window.__RDT_CLI_RUNTIME__.profilerCommits());
+      case "profiler.commit":
+        await this.ensureReactDetected();
+        return unwrapRuntimeResult(await this.page.evaluate(
+          ({ commitId }) => window.__RDT_CLI_RUNTIME__.profilerCommit(commitId),
+          payload,
+        ));
+      case "profiler.ranked":
+        await this.ensureReactDetected();
+        return unwrapRuntimeResult(await this.page.evaluate(
+          ({ commitId, limit }) => window.__RDT_CLI_RUNTIME__.profilerRanked(commitId, limit),
+          payload,
+        ));
+      case "profiler.flamegraph":
+        await this.ensureReactDetected();
+        return unwrapRuntimeResult(await this.page.evaluate(
+          ({ commitId }) => window.__RDT_CLI_RUNTIME__.profilerFlamegraph(commitId),
+          payload,
+        ));
       case "source.reveal":
         await this.ensureReactDetected();
-        return unwrapRuntimeResult(await this.page.evaluate(({ nodeId, snapshotId }) => {
-          const node = window.__RDT_CLI_RUNTIME__.inspectNode(nodeId, snapshotId);
+        return unwrapRuntimeResult(await this.page.evaluate(({ nodeId, snapshotId, commitId }) => {
+          const node = window.__RDT_CLI_RUNTIME__.inspectNode(nodeId, snapshotId, commitId);
           return node ? node.source : null;
         }, payload));
       default:

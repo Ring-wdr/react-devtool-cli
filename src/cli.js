@@ -189,6 +189,7 @@ async function handleNodeCommand(command, positionals, options) {
     ensure(nodeId, "Missing node id for `rdt node inspect`.", { code: "missing-node-id" });
     const response = await requestSession(options.session, "node.inspect", {
       nodeId,
+      commitId: options.commit ? String(options.commit) : undefined,
       ...collectSnapshotPayload(options),
     });
     writeStdout(response.result, resolveFormat(options));
@@ -259,7 +260,7 @@ async function writeProfilerExport(sessionName, exported, options) {
   };
 }
 
-async function handleProfilerCommand(command, options) {
+async function handleProfilerCommand(command, positionals, options) {
   ensure(options.session, "Missing required option --session", { code: "missing-session" });
 
   if (command === "start") {
@@ -278,6 +279,45 @@ async function handleProfilerCommand(command, options) {
   if (command === "summary") {
     const response = await requestSession(options.session, "profiler.summary");
     writeStdout(response.result, resolveFormat(options));
+    return;
+  }
+
+  if (command === "commits") {
+    const response = await requestSession(options.session, "profiler.commits");
+    writeStdout(response.result, resolveFormat(options));
+    return;
+  }
+
+  if (command === "commit") {
+    const commitId = positionals[0] ? String(positionals[0]) : (options.commit ? String(options.commit) : null);
+    ensure(commitId, "Missing required option --commit for `rdt profiler commit`.", { code: "missing-commit-id" });
+    const response = await requestSession(options.session, "profiler.commit", { commitId });
+    writeStdout(response.result, resolveFormat(options));
+    return;
+  }
+
+  if (command === "ranked") {
+    const commitId = positionals[0] ? String(positionals[0]) : (options.commit ? String(options.commit) : null);
+    ensure(commitId, "Missing required option --commit for `rdt profiler ranked`.", { code: "missing-commit-id" });
+    const response = await requestSession(options.session, "profiler.ranked", {
+      commitId,
+      limit: options.limit ? Number(options.limit) : undefined,
+    });
+    writeStdout(response.result, resolveFormat(options));
+    return;
+  }
+
+  if (command === "flamegraph") {
+    const commitId = positionals[0] ? String(positionals[0]) : (options.commit ? String(options.commit) : null);
+    ensure(commitId, "Missing required option --commit for `rdt profiler flamegraph`.", { code: "missing-commit-id" });
+    const format = resolveFormat(options);
+    if (format === "yaml") {
+      throw new CliError("YAML is only supported for compact results. Use json or pretty for flamegraph output.", {
+        code: "unsupported-format",
+      });
+    }
+    const response = await requestSession(options.session, "profiler.flamegraph", { commitId });
+    writeStdout(response.result, format);
     return;
   }
 
@@ -329,13 +369,17 @@ Usage:
   rdt session doctor --session <name> [--format json|yaml|pretty]
   rdt session close --session <name>
   rdt tree get --session <name> [--format json|yaml|pretty]
-  rdt node inspect <id> --session <name> [--snapshot <id>]
+  rdt node inspect <id> --session <name> [--snapshot <id>] [--commit <id>]
   rdt node search <query> --session <name> [--snapshot <id>]
   rdt node highlight <id> --session <name> [--snapshot <id>]
   rdt node pick --session <name> [--timeout-ms 30000]
   rdt profiler start --session <name> [--profile-id <id>]
   rdt profiler stop --session <name>
   rdt profiler summary --session <name> [--format json|yaml|pretty]
+  rdt profiler commits --session <name> [--format json|yaml|pretty]
+  rdt profiler commit <id> --session <name> [--format json|yaml|pretty]
+  rdt profiler ranked <id> --session <name> [--limit <n>] [--format json|yaml|pretty]
+  rdt profiler flamegraph <id> --session <name> [--format json|pretty]
   rdt profiler export --session <name> [--output file.jsonl] [--compress]
   rdt source reveal <id> --session <name> [--snapshot <id>]
 
@@ -373,7 +417,7 @@ export async function runCli(argv) {
         await handleNodeCommand(command, rest, options);
         return;
       case "profiler":
-        await handleProfilerCommand(command, options);
+        await handleProfilerCommand(command, rest, options);
         return;
       case "source":
         await handleSourceCommand(command, rest, options);

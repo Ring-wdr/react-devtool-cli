@@ -1,5 +1,4 @@
-export function createRuntimeScript() {
-  return String.raw`(() => {
+export function runtimeBootstrap() {
   if (window.__RDT_CLI_RUNTIME__) {
     return;
   }
@@ -1611,5 +1610,8 @@ export function createRuntimeScript() {
     profilerSummary: summarizeProfiler,
     doctor,
   };
-})();`;
+}
+
+export function createRuntimeScript() {
+  return `(${runtimeBootstrap.toString()})();`;
 }

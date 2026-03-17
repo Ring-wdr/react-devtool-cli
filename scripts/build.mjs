@@ -17,7 +17,8 @@ const sharedOptions = {
   platform: "node",
   target: "node22",
   sourcemap: false,
-  minify: false,
+  minify: true,
+  legalComments: "none",
   external: ["playwright", "playwright-core"],
 };
 

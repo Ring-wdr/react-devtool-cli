@@ -3,6 +3,26 @@ export function runtimeBootstrap() {
     return;
   }
 
+  const OBSERVED = "observed";
+  const INFERRED = "inferred";
+  const STRUCTURAL_ONLY = "structural-only";
+  const ACTUAL_DURATION = "actual-duration";
+  const MIXED = "mixed";
+  const COMMIT = "commit";
+  const NO_REACT_WARNING = "No React fiber roots were detected on the current page";
+  const NO_SOURCE_WARNING = "_debugSource unavailable for this node in the current build";
+  const DOCTOR_SOURCE_WARNING = "_debugSource is unavailable for the inspected node in the current build";
+  const SNAPSHOT_DIFF_LIMITATION = "changed nodes and rerender reasons are inferred from commit snapshot diffs";
+  const RANKING_FALLBACK_LIMITATION = "duration metrics were unavailable; ranking falls back to changed subtree breadth";
+  const FLAMEGRAPH_FALLBACK_LIMITATION = "duration metrics were unavailable; flamegraph timings fall back to null values";
+  const COMMIT_RANKING_WARNING = "Duration metrics were unavailable for this commit; ranking uses changed subtree breadth";
+  const COMMIT_DETAIL_WARNING = "Duration metrics were unavailable for this commit; subtree ranking uses structural fallbacks";
+  const COMMIT_FLAMEGRAPH_WARNING = "Duration metrics were unavailable for this commit; flamegraph emphasizes changed subtree structure";
+  const COMMIT_LIST_WARNING = "Duration metrics were unavailable for this commit; ranked views use structural fallbacks";
+  const PROFILER_FOLLOWUP_WARNING = "Profiler data is commit-oriented only; use inspect/tree snapshots for follow-up analysis";
+  const PROFILER_SOURCE_WARNING = "Profiler records component duration metrics when the current React runtime exposes them, but changed-fiber attribution is still inferred from commit snapshots";
+  const PROFILER_STRUCTURAL_WARNING = "Profiler is commit-oriented only; it does not track changed fibers or component durations";
+
   const state = {
     nextNodeId: 1,
     nextRootId: 1,
@@ -43,7 +63,7 @@ export function runtimeBootstrap() {
   };
 
   function hasDurationMetrics(measurementMode) {
-    return measurementMode === "actual-duration" || measurementMode === "mixed";
+    return measurementMode === ACTUAL_DURATION || measurementMode === MIXED;
   }
 
   function getProfilerLimitations(measurementMode) {
@@ -240,6 +260,58 @@ export function runtimeBootstrap() {
     return changed;
   }
 
+  function getCommitEvents() {
+    return state.profiler.events.filter((event) => event.eventType === COMMIT);
+  }
+
+  function getSnapshotLimitations() {
+    return commonLimitations.snapshot.slice();
+  }
+
+  function getObservedTree(runtimeWarnings, tree) {
+    return {
+      snapshotId: null,
+      snapshotScoped: true,
+      identityStableAcrossCommits: false,
+      observationLevel: OBSERVED,
+      limitations: getSnapshotLimitations(),
+      runtimeWarnings,
+      generatedAt: tree.generatedAt,
+      reactDetected: tree.reactDetected,
+      roots: tree.roots,
+      nodes: tree.nodes,
+      selectedNodeId: tree.selectedNodeId,
+    };
+  }
+
+  function getCommitNotFoundError(commitId) {
+    return createRuntimeError(
+      "commit-not-found",
+      "Commit \"" + commitId + "\" is not available in the current profiler buffer.",
+      { commitId },
+    );
+  }
+
+  function getProfileNotFoundError(profileId) {
+    return createRuntimeError(
+      "profile-not-found",
+      "Profile \"" + profileId + "\" is not available in the current profiler history.",
+      { profileId },
+    );
+  }
+
+  function getCommitObservation(measurementMode, warning, extraLimitations) {
+    return {
+      observationLevel: measurementMode === ACTUAL_DURATION ? OBSERVED : INFERRED,
+      limitations: getProfilerLimitations(measurementMode).concat(
+        measurementMode === ACTUAL_DURATION
+          ? [SNAPSHOT_DIFF_LIMITATION]
+          : extraLimitations,
+      ),
+      runtimeWarnings: measurementMode === ACTUAL_DURATION ? [] : [warning],
+    };
+  }
+
   function getDisplayName(fiber) {
     if (!fiber) {
       return null;
@@ -392,9 +464,9 @@ export function runtimeBootstrap() {
       snapshotId: null,
       snapshotScoped: true,
       identityStableAcrossCommits: false,
-      observationLevel: "observed",
+      observationLevel: OBSERVED,
       limitations: commonLimitations.snapshot.concat(commonLimitations.inspect),
-      runtimeWarnings: node.source ? [] : ["_debugSource unavailable for this node in the current build"],
+      runtimeWarnings: node.source ? [] : [NO_SOURCE_WARNING],
       id: node.id,
       displayName: node.displayName,
       tag: node.tag,
@@ -513,8 +585,8 @@ export function runtimeBootstrap() {
       snapshotId: snapshot.snapshotId,
       snapshotScoped: true,
       identityStableAcrossCommits: false,
-      observationLevel: "observed",
-      limitations: commonLimitations.snapshot.slice(),
+      observationLevel: OBSERVED,
+      limitations: getSnapshotLimitations(),
       runtimeWarnings: [],
       generatedAt: snapshot.generatedAt,
       reactDetected: snapshot.reactDetected,
@@ -565,19 +637,7 @@ export function runtimeBootstrap() {
   function collectTree() {
     const liveTree = collectLiveTree();
     if (!liveTree.reactDetected) {
-      return {
-        snapshotId: null,
-        snapshotScoped: true,
-        identityStableAcrossCommits: false,
-        observationLevel: "observed",
-        limitations: commonLimitations.snapshot.slice(),
-        runtimeWarnings: ["No React fiber roots were detected on the current page"],
-        generatedAt: liveTree.generatedAt,
-        reactDetected: false,
-        roots: [],
-        nodes: [],
-        selectedNodeId: null,
-      };
+      return getObservedTree([NO_REACT_WARNING], liveTree);
     }
 
     const snapshot = cacheSnapshot(liveTree);
@@ -586,19 +646,7 @@ export function runtimeBootstrap() {
 
   function peekTree() {
     const liveTree = collectLiveTree();
-    return {
-      snapshotId: null,
-      snapshotScoped: true,
-      identityStableAcrossCommits: false,
-      observationLevel: "observed",
-      limitations: commonLimitations.snapshot.slice(),
-      runtimeWarnings: liveTree.reactDetected ? [] : ["No React fiber roots were detected on the current page"],
-      generatedAt: liveTree.generatedAt,
-      reactDetected: liveTree.reactDetected,
-      roots: liveTree.roots,
-      nodes: liveTree.nodes,
-      selectedNodeId: liveTree.selectedNodeId,
-    };
+    return getObservedTree(liveTree.reactDetected ? [] : [NO_REACT_WARNING], liveTree);
   }
 
   function resolveSnapshot(snapshotId, createIfMissing = true) {
@@ -627,7 +675,7 @@ export function runtimeBootstrap() {
   }
 
   function getProfilerCommit(commitId) {
-    return state.profiler.events.find((event) => event.eventType === "commit" && event.commitId === commitId) || null;
+    return state.profiler.events.find((event) => event.eventType === COMMIT && event.commitId === commitId) || null;
   }
 
   function inspectNode(nodeId, snapshotId, commitId) {
@@ -780,17 +828,17 @@ export function runtimeBootstrap() {
   }
 
   function summarizeProfiler() {
-    const commitEvents = state.profiler.events.filter((event) => event.eventType === "commit");
+    const commitEvents = getCommitEvents();
     const nodeCounts = commitEvents.map((event) => event.nodeCount);
     const totalNodeCount = nodeCounts.reduce((sum, count) => sum + count, 0);
-    const measurementModes = [...new Set(commitEvents.map((event) => event.measurementMode || "structural-only"))];
+    const measurementModes = [...new Set(commitEvents.map((event) => event.measurementMode || STRUCTURAL_ONLY))];
 
-    const measurementMode = measurementModes.length === 1 ? measurementModes[0] : "mixed";
+    const measurementMode = measurementModes.length === 1 ? measurementModes[0] : MIXED;
     const measuresComponentDuration = hasDurationMetrics(measurementMode);
     return {
-      observationLevel: "observed",
+      observationLevel: OBSERVED,
       limitations: getProfilerLimitations(measurementMode),
-      runtimeWarnings: state.profiler.active ? [] : ["Profiler data is commit-oriented only; use inspect/tree snapshots for follow-up analysis"],
+      runtimeWarnings: state.profiler.active ? [] : [PROFILER_FOLLOWUP_WARNING],
       profileId: state.profiler.profileId,
       active: state.profiler.active,
       startedAt: state.profiler.startedAt,
@@ -847,8 +895,8 @@ export function runtimeBootstrap() {
     const tree = peekTree();
     const liveTree = tree.reactDetected ? collectLiveTree() : null;
     const liveMeasurementMode = liveTree && Array.from(liveTree.nodeMetrics.values()).some((metrics) => typeof metrics.actualDuration === "number")
-      ? "actual-duration"
-      : "structural-only";
+      ? ACTUAL_DURATION
+      : STRUCTURAL_ONLY;
     const checks = {
       reactRuntime: {
         status: tree.reactDetected ? "ok" : "failed",
@@ -881,10 +929,10 @@ export function runtimeBootstrap() {
     const runtimeWarnings = [];
 
     if (!tree.reactDetected) {
-      runtimeWarnings.push("No React fiber roots were detected on the current page");
+      runtimeWarnings.push(NO_REACT_WARNING);
       return {
         status: "failed",
-        observationLevel: "observed",
+        observationLevel: OBSERVED,
         limitations: commonLimitations.snapshot.concat(commonLimitations.inspect, getProfilerLimitations(liveMeasurementMode)),
         runtimeWarnings,
         checks,
@@ -909,19 +957,19 @@ export function runtimeBootstrap() {
         available: Boolean(details?.source),
       };
       if (!details?.source) {
-        runtimeWarnings.push("_debugSource is unavailable for the inspected node in the current build");
+        runtimeWarnings.push(DOCTOR_SOURCE_WARNING);
       }
     }
 
     runtimeWarnings.push(
       hasDurationMetrics(liveMeasurementMode)
-        ? "Profiler records component duration metrics when the current React runtime exposes them, but changed-fiber attribution is still inferred from commit snapshots"
-        : "Profiler is commit-oriented only; it does not track changed fibers or component durations",
+        ? PROFILER_SOURCE_WARNING
+        : PROFILER_STRUCTURAL_WARNING,
     );
 
     return {
       status: runtimeWarnings.length ? "partial" : "ok",
-      observationLevel: "observed",
+      observationLevel: OBSERVED,
       limitations: commonLimitations.snapshot.concat(commonLimitations.inspect, getProfilerLimitations(liveMeasurementMode)),
       runtimeWarnings,
       checks,
@@ -1148,11 +1196,11 @@ export function runtimeBootstrap() {
   function buildCommitEvent(rendererId, rootState, priorityLevel, liveTree) {
     const commitId = "commit-" + state.profiler.nextCommitId++;
     const measurementMode = Array.from(liveTree.nodeMetrics.values()).some((metrics) => typeof metrics.actualDuration === "number")
-      ? "actual-duration"
-      : "structural-only";
+      ? ACTUAL_DURATION
+      : STRUCTURAL_ONLY;
 
     return {
-      eventType: "commit",
+      eventType: COMMIT,
       commitId,
       timestamp: new Date().toISOString(),
       rootId: rootState.rootId,
@@ -1182,7 +1230,7 @@ export function runtimeBootstrap() {
   }
 
   function getCommitMeasurementMode(commit) {
-    return commit?.measurementMode || "structural-only";
+    return commit?.measurementMode || STRUCTURAL_ONLY;
   }
 
   function getCommitSummary(commit) {
@@ -1207,16 +1255,11 @@ export function runtimeBootstrap() {
   }
 
   function listProfilerCommits() {
-    return state.profiler.events
-      .filter((event) => event.eventType === "commit")
+    return getCommitEvents()
       .map((commit) => ({
-        observationLevel: "inferred",
-        limitations: getProfilerLimitations(getCommitMeasurementMode(commit)).concat([
-          "changed nodes and rerender reasons are inferred from commit snapshot diffs",
+        ...getCommitObservation(getCommitMeasurementMode(commit), COMMIT_LIST_WARNING, [
+          SNAPSHOT_DIFF_LIMITATION,
         ]),
-        runtimeWarnings: getCommitMeasurementMode(commit) === "actual-duration"
-          ? []
-          : ["Duration metrics were unavailable for this commit; ranked views use structural fallbacks"],
         ...getCommitSummary(commit),
       }));
   }
@@ -1235,11 +1278,7 @@ export function runtimeBootstrap() {
   function getProfilerCommitDetail(commitId) {
     const commit = getProfilerCommit(commitId);
     if (!commit) {
-      return createRuntimeError(
-        "commit-not-found",
-        "Commit \"" + commitId + "\" is not available in the current profiler buffer.",
-        { commitId },
-      );
+      return getCommitNotFoundError(commitId);
     }
 
     const changedNodes = commit.changedNodeIds.map((nodeId) => {
@@ -1258,13 +1297,10 @@ export function runtimeBootstrap() {
     });
 
     return {
-      observationLevel: "inferred",
-      limitations: getProfilerLimitations(getCommitMeasurementMode(commit)).concat([
-        "changed nodes and rerender reasons are inferred from commit snapshot diffs",
+      ...getCommitObservation(getCommitMeasurementMode(commit), COMMIT_DETAIL_WARNING, [
+        COMMIT_DETAIL_WARNING,
+        SNAPSHOT_DIFF_LIMITATION,
       ]),
-      runtimeWarnings: getCommitMeasurementMode(commit) === "actual-duration"
-        ? []
-        : ["Duration metrics were unavailable for this commit; subtree ranking uses structural fallbacks"],
       ...getCommitSummary(commit),
       changedNodeIds: commit.changedNodeIds,
       mountedNodeIds: commit.mountedNodeIds,
@@ -1359,11 +1395,7 @@ export function runtimeBootstrap() {
   function rankProfilerCommit(commitId, limit) {
     const commit = getProfilerCommit(commitId);
     if (!commit) {
-      return createRuntimeError(
-        "commit-not-found",
-        "Commit \"" + commitId + "\" is not available in the current profiler buffer.",
-        { commitId },
-      );
+      return getCommitNotFoundError(commitId);
     }
 
     const ranked = commit.treeSnapshot.nodes.map((node) => {
@@ -1390,7 +1422,7 @@ export function runtimeBootstrap() {
 
     const measurementMode = getCommitMeasurementMode(commit);
     ranked.sort((left, right) => {
-      if (measurementMode === "actual-duration") {
+      if (measurementMode === ACTUAL_DURATION) {
         const rightDuration = typeof right.totalTime === "number" ? right.totalTime : -1;
         const leftDuration = typeof left.totalTime === "number" ? left.totalTime : -1;
         if (rightDuration !== leftDuration) {
@@ -1410,18 +1442,10 @@ export function runtimeBootstrap() {
       item.hotspotLabel = getHotspotLabel(item);
     }
     return {
-      observationLevel: measurementMode === "actual-duration" ? "observed" : "inferred",
-      limitations: getProfilerLimitations(measurementMode).concat(
-        measurementMode === "actual-duration"
-          ? ["changed nodes and rerender reasons are inferred from commit snapshot diffs"]
-          : [
-              "duration metrics were unavailable; ranking falls back to changed subtree breadth",
-              "changed nodes and rerender reasons are inferred from commit snapshot diffs",
-            ],
-      ),
-      runtimeWarnings: measurementMode === "actual-duration"
-        ? []
-        : ["Duration metrics were unavailable for this commit; ranking uses changed subtree breadth"],
+      ...getCommitObservation(measurementMode, COMMIT_RANKING_WARNING, [
+        RANKING_FALLBACK_LIMITATION,
+        SNAPSHOT_DIFF_LIMITATION,
+      ]),
       commitId,
       measurementMode,
       hotspotSummaries: getCommitHotspotSummaries(commit),
@@ -1462,11 +1486,7 @@ export function runtimeBootstrap() {
   function flamegraphProfilerCommit(commitId) {
     const commit = getProfilerCommit(commitId);
     if (!commit) {
-      return createRuntimeError(
-        "commit-not-found",
-        "Commit \"" + commitId + "\" is not available in the current profiler buffer.",
-        { commitId },
-      );
+      return getCommitNotFoundError(commitId);
     }
 
     const nodesById = {};
@@ -1485,18 +1505,10 @@ export function runtimeBootstrap() {
     }
 
     return {
-      observationLevel: getCommitMeasurementMode(commit) === "actual-duration" ? "observed" : "inferred",
-      limitations: getProfilerLimitations(getCommitMeasurementMode(commit)).concat(
-        getCommitMeasurementMode(commit) === "actual-duration"
-          ? ["changed nodes and rerender reasons are inferred from commit snapshot diffs"]
-          : [
-              "duration metrics were unavailable; flamegraph timings fall back to null values",
-              "changed nodes and rerender reasons are inferred from commit snapshot diffs",
-            ],
-      ),
-      runtimeWarnings: getCommitMeasurementMode(commit) === "actual-duration"
-        ? []
-        : ["Duration metrics were unavailable for this commit; flamegraph emphasizes changed subtree structure"],
+      ...getCommitObservation(getCommitMeasurementMode(commit), COMMIT_FLAMEGRAPH_WARNING, [
+        FLAMEGRAPH_FALLBACK_LIMITATION,
+        SNAPSHOT_DIFF_LIMITATION,
+      ]),
       commitId,
       measurementMode: getCommitMeasurementMode(commit),
       ...getCommitHotspotSummaries(commit),
@@ -1515,7 +1527,7 @@ export function runtimeBootstrap() {
 
     const liveTree = collectLiveTree();
     const commit = buildCommitEvent(rendererId, rootState, priorityLevel, liveTree);
-    const previousCommit = state.profiler.events.filter((event) => event.eventType === "commit").slice(-1)[0] || null;
+    const previousCommit = getCommitEvents().slice(-1)[0] || null;
     const diff = buildCommitDiff(previousCommit, commit);
     commit.nodeAnalysisById = diff.nodeAnalysisById;
     commit.changedNodeIds = diff.changedNodeIds;
@@ -1587,21 +1599,13 @@ export function runtimeBootstrap() {
     exportProfiler(profileId) {
       const record = profileId ? getStoredProfilerRecord(profileId) : getCurrentProfilerRecord();
       if (!record) {
-        return createRuntimeError(
-          "profile-not-found",
-          "Profile \"" + profileId + "\" is not available in the current profiler history.",
-          { profileId },
-        );
+        return getProfileNotFoundError(profileId);
       }
       return record;
     },
     profilerProfile(profileId) {
       const record = getStoredProfilerRecord(profileId);
-      return record || createRuntimeError(
-        "profile-not-found",
-        "Profile \"" + profileId + "\" is not available in the current profiler history.",
-        { profileId },
-      );
+      return record || getProfileNotFoundError(profileId);
     },
     profilerCommits: listProfilerCommits,
     profilerCommit: getProfilerCommitDetail,

@@ -82,6 +82,8 @@ rdt profiler export --session demo --compress
   - `rdt interact wait --session <name> --ms <n>`
 - These commands execute through the same Playwright session that owns the current `rdt` browser page.
 - They target the first matching selector only and return structured action metadata plus trust-boundary fields.
+- `click`, `type`, and `press` confirm that the action was dispatched. They do not guarantee that the page or React tree has fully settled afterward.
+- When profiling or triggering large rerenders, follow `interact` with an explicit verification step such as `interact wait`, `tree get`, `node inspect`, or a profiler read command.
 
 Example deterministic flow:
 

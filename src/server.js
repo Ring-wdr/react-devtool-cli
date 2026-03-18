@@ -579,6 +579,52 @@ class SessionServer {
     return this.page;
   }
 
+  async isProfilerActive() {
+    const page = await this.ensureInteractivePage();
+
+    try {
+      return await page.evaluate(() => Boolean(window.__RDT_CLI_RUNTIME__?.profilerSummary?.().active));
+    } catch {
+      return false;
+    }
+  }
+
+  async clickLocator(locator, timeoutMs) {
+    if (!await this.isProfilerActive()) {
+      await locator.click({ timeout: timeoutMs, noWaitAfter: true });
+      return "playwright";
+    }
+
+    await locator.waitFor({ state: "visible", timeout: timeoutMs });
+    await locator.scrollIntoViewIfNeeded({ timeout: timeoutMs });
+    const clicked = await locator.evaluate((element) => {
+      const ariaDisabled = element.getAttribute?.("aria-disabled");
+      const disabled = typeof element.matches === "function" ? element.matches(":disabled") : false;
+      if (disabled || ariaDisabled === "true") {
+        return false;
+      }
+
+      if (typeof element.click === "function") {
+        element.click();
+        return true;
+      }
+
+      element.dispatchEvent(new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        view: window,
+      }));
+      return true;
+    });
+
+    if (!clicked) {
+      throw new CliError("Target element is disabled.", { code: "disabled-target" });
+    }
+
+    return "dom-click";
+  }
+
   async interact(command, payload) {
     const page = await this.ensureInteractivePage();
     const timeoutMs = payload.timeoutMs ? Number(payload.timeoutMs) : this.timeoutMs;
@@ -609,27 +655,37 @@ class SessionServer {
           textPreview: element.textContent ? element.textContent.slice(0, 80) : null,
         }))
       : null;
+    let delivery = command;
+    const runtimeWarnings = [];
 
     if (command === "click") {
-      await locator.click({ timeout: timeoutMs });
+      delivery = await this.clickLocator(locator, timeoutMs);
     } else if (command === "type") {
-      await locator.click({ timeout: timeoutMs });
+      await locator.focus({ timeout: timeoutMs });
       await locator.fill(String(payload.text), { timeout: timeoutMs });
+      delivery = "fill";
     } else if (command === "press") {
       if (locator) {
-        await locator.click({ timeout: timeoutMs });
+        await locator.focus({ timeout: timeoutMs });
       }
       await page.keyboard.press(String(payload.key));
+      delivery = "keyboard";
     } else {
       throw new CliError(`Unsupported interact action: ${command}`, { code: "unsupported-action" });
+    }
+
+    runtimeWarnings.push("Interact actions confirm dispatch only; verify post-action UI state with follow-up commands when profiling or large rerenders are active.");
+    if (delivery === "dom-click") {
+      runtimeWarnings.push("Profiler was active, so click used a DOM fallback instead of Playwright pointer input.");
     }
 
     return {
       observationLevel: "observed",
       limitations: ["selector-based interaction targets the first matching element only"],
-      runtimeWarnings: [],
+      runtimeWarnings,
       action: command,
       ok: true,
+      delivery,
       selector,
       target,
       key: payload.key ? String(payload.key) : null,
@@ -673,10 +729,17 @@ class SessionServer {
 
     const { action, payload } = JSON.parse(body || "{}");
     const result = await this.execute(action, payload || {});
-    await writeRuntime(this.sessionName, await this.status());
 
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ ok: true, result }));
+
+    if (action !== "session.close") {
+      this.refreshRuntime().catch(() => {});
+    }
+  }
+
+  async refreshRuntime() {
+    await writeRuntime(this.sessionName, await this.status());
   }
 
   async execute(action, payload) {

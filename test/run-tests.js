@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import http from "node:http";
 
 import { parseArgv } from "../src/args.js";
+import { closeSessionWithFallback, forceKillProcessTree } from "../src/cli.js";
 import { formatOutput } from "../src/format.js";
+import { requestSession } from "../src/http-client.js";
 import {
   buildSessionCapabilities,
   getSessionEndpoint,
@@ -10,13 +13,26 @@ import {
   resolveTimeoutMs,
 } from "../src/session-model.js";
 
+const pending = [];
+
 function run(name, fn) {
-  try {
-    fn();
-    process.stdout.write(`ok - ${name}\n`);
-  } catch (error) {
-    process.stderr.write(`not ok - ${name}\n${error.stack}\n`);
-    process.exitCode = 1;
+  const task = Promise.resolve()
+    .then(fn)
+    .then(() => {
+      process.stdout.write(`ok - ${name}\n`);
+    })
+    .catch((error) => {
+      process.stderr.write(`not ok - ${name}\n${error.stack}\n`);
+      process.exitCode = 1;
+    });
+
+  pending.push(task);
+}
+
+async function main() {
+  await Promise.all(pending);
+  if (process.exitCode) {
+    process.exit(process.exitCode);
   }
 }
 
@@ -194,6 +210,84 @@ run("session-model exposes transport capabilities", () => {
   });
 });
 
-if (process.exitCode) {
-  process.exit(process.exitCode);
-}
+run("forceKillProcessTree uses taskkill on Windows", () => {
+  const calls = [];
+  const result = forceKillProcessTree(123, {
+    platform: "win32",
+    spawnSyncImpl(command, args) {
+      calls.push({ command, args });
+      return { status: 0, stdout: "", stderr: "" };
+    },
+  });
+
+  assert.deepEqual(calls, [{
+    command: "taskkill",
+    args: ["/PID", "123", "/T", "/F"],
+  }]);
+  assert.equal(result.ok, true);
+  assert.equal(result.strategy, "taskkill");
+});
+
+run("closeSessionWithFallback returns graceful close result when session responds", async () => {
+  const result = await closeSessionWithFallback("demo", {
+    async requestSessionImpl() {
+      return { result: { closed: true, sessionName: "demo" } };
+    },
+  });
+
+  assert.deepEqual(result, {
+    closed: true,
+    sessionName: "demo",
+    forced: false,
+  });
+});
+
+run("closeSessionWithFallback force closes unresponsive sessions", async () => {
+  const calls = [];
+  const result = await closeSessionWithFallback("demo", {
+    async requestSessionImpl() {
+      throw Object.assign(new Error("timeout"), { code: "session-request-timeout" });
+    },
+    async readMetadataImpl() {
+      return { pid: 321 };
+    },
+    forceKillProcessTreeImpl(pid) {
+      calls.push({ type: "kill", pid });
+      return { ok: true };
+    },
+    async removeSessionFilesImpl(sessionName) {
+      calls.push({ type: "remove", sessionName });
+    },
+  });
+
+  assert.deepEqual(calls, [
+    { type: "kill", pid: 321 },
+    { type: "remove", sessionName: "demo" },
+  ]);
+  assert.deepEqual(result, {
+    closed: true,
+    sessionName: "demo",
+    forced: true,
+    recoveredFrom: "session-request-timeout",
+  });
+});
+
+run("requestSession times out when the session server does not respond", async () => {
+  const server = http.createServer(() => {});
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+
+  try {
+    await assert.rejects(
+      requestSession("timeout-test", "session.status", {}, {
+        timeoutMs: 50,
+        metadata: { port, secret: "secret" },
+      }),
+      (error) => error.code === "session-request-timeout",
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+await main();

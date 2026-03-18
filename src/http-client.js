@@ -3,10 +3,16 @@ import http from "node:http";
 import { CliError } from "./errors.js";
 import { readMetadata } from "./session-store.js";
 
-export async function requestSession(sessionName, action, payload = {}) {
-  const metadata = await readMetadata(sessionName);
+export const DEFAULT_SESSION_REQUEST_TIMEOUT_MS = 30000;
+
+export async function requestSession(sessionName, action, payload = {}, options = {}) {
+  const metadata = options.metadata ?? await readMetadata(sessionName);
+  const timeoutMs = options.timeoutMs == null
+    ? DEFAULT_SESSION_REQUEST_TIMEOUT_MS
+    : Number(options.timeoutMs);
 
   return new Promise((resolve, reject) => {
+    let settled = false;
     const request = http.request(
       {
         hostname: "127.0.0.1",
@@ -25,6 +31,11 @@ export async function requestSession(sessionName, action, payload = {}) {
           body += chunk;
         });
         response.on("end", () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+
           try {
             const parsed = body ? JSON.parse(body) : {};
             if (response.statusCode && response.statusCode >= 400) {
@@ -44,7 +55,24 @@ export async function requestSession(sessionName, action, payload = {}) {
       },
     );
 
+    request.setTimeout(timeoutMs, () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      request.destroy();
+      reject(
+        new CliError(`Session "${sessionName}" did not respond to ${action} within ${timeoutMs}ms.`, {
+          code: "session-request-timeout",
+        }),
+      );
+    });
+
     request.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       reject(
         new CliError(`Failed to contact session "${sessionName}": ${error.message}`, {
           code: "session-unreachable",

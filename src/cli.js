@@ -4,7 +4,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import path from "node:path";
 import process from "node:process";
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { parseArgv } from "./args.js";
@@ -17,6 +17,7 @@ import {
   ensureSessionDir,
   getSessionPaths,
   readMetadata,
+  removeSessionFiles,
 } from "./session-store.js";
 
 async function waitForSessionReady(sessionName, timeoutMs = 15000) {
@@ -101,6 +102,101 @@ function writeStdout(value, format) {
   process.stdout.write(formatOutput(value, format));
 }
 
+function isMissingProcessMessage(message) {
+  const normalized = String(message || "").toLowerCase();
+  return normalized.includes("not found")
+    || normalized.includes("cannot find")
+    || normalized.includes("no running instance")
+    || normalized.includes("no instance")
+    || normalized.includes("not exist");
+}
+
+export function forceKillProcessTree(pid, dependencies = {}) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    throw new CliError(`Invalid session pid: ${pid}`, { code: "invalid-session-pid" });
+  }
+
+  const spawnSyncImpl = dependencies.spawnSyncImpl ?? spawnSync;
+  const killImpl = dependencies.killImpl ?? process.kill;
+  const platform = dependencies.platform ?? process.platform;
+
+  if (platform === "win32") {
+    const result = spawnSyncImpl("taskkill", ["/PID", String(pid), "/T", "/F"], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+
+    if (result.status === 0 || isMissingProcessMessage(result.stdout) || isMissingProcessMessage(result.stderr)) {
+      return { ok: true, strategy: "taskkill" };
+    }
+
+    throw new CliError(
+      `Failed to terminate session process tree ${pid}: ${result.stderr?.trim() || result.stdout?.trim() || "taskkill failed"}`,
+      { code: "session-force-close-failed" },
+    );
+  }
+
+  try {
+    killImpl(-pid, "SIGKILL");
+    return { ok: true, strategy: "process-group" };
+  } catch (error) {
+    if (error?.code !== "ESRCH") {
+      try {
+        killImpl(pid, "SIGKILL");
+        return { ok: true, strategy: "process" };
+      } catch (innerError) {
+        if (innerError?.code !== "ESRCH") {
+          throw new CliError(
+            `Failed to terminate session process tree ${pid}: ${innerError?.message ?? String(innerError)}`,
+            { code: "session-force-close-failed" },
+          );
+        }
+      }
+    }
+  }
+
+  return { ok: true, strategy: "process-missing", missing: true };
+}
+
+export async function closeSessionWithFallback(sessionName, dependencies = {}) {
+  const requestSessionImpl = dependencies.requestSessionImpl ?? requestSession;
+  const readMetadataImpl = dependencies.readMetadataImpl ?? readMetadata;
+  const removeSessionFilesImpl = dependencies.removeSessionFilesImpl ?? removeSessionFiles;
+  const forceKillProcessTreeImpl = dependencies.forceKillProcessTreeImpl ?? forceKillProcessTree;
+
+  try {
+    const response = await requestSessionImpl(sessionName, "session.close", {}, { timeoutMs: 3000 });
+    return {
+      ...response.result,
+      forced: false,
+    };
+  } catch (error) {
+    let metadata;
+    try {
+      metadata = await readMetadataImpl(sessionName);
+    } catch (metadataError) {
+      if (metadataError?.code === "ENOENT") {
+        return {
+          closed: true,
+          sessionName,
+          forced: false,
+        };
+      }
+      throw metadataError;
+    }
+
+    forceKillProcessTreeImpl(Number(metadata.pid));
+    await removeSessionFilesImpl(sessionName);
+
+    return {
+      closed: true,
+      sessionName,
+      forced: true,
+      recoveredFrom: error?.code ?? "session-close-failed",
+    };
+  }
+}
+
 function collectSharedSessionOptions(options, transport) {
   const timeout = resolveTimeoutMs(options);
   const result = {
@@ -134,8 +230,8 @@ async function handleSessionCommand(command, options) {
 
   if (command === "close") {
     ensure(options.session, "Missing required option --session", { code: "missing-session" });
-    const response = await requestSession(options.session, "session.close");
-    writeStdout(response.result, resolveFormat(options));
+    const result = await closeSessionWithFallback(String(options.session));
+    writeStdout(result, resolveFormat(options));
     return;
   }
 

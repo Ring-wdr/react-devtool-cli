@@ -14,6 +14,7 @@ import {
   buildSessionCapabilities,
   getSessionEndpoint,
   normalizeBrowserName,
+  normalizeEngine,
   normalizeTransport,
   resolveTimeoutMs,
 } from "./session-model.js";
@@ -287,6 +288,7 @@ class SessionServer {
     this.secret = options.secret;
     this.transport = normalizeTransport(options.transport ?? options.mode);
     this.browserName = normalizeBrowserName(options.browser, this.transport);
+    this.enginePreference = normalizeEngine(options.engine);
     this.timeoutMs = resolveTimeoutMs(options);
     this.endpoint = getSessionEndpoint(this.transport, options);
     this.persistent = false;
@@ -334,6 +336,7 @@ class SessionServer {
       secret: this.secret,
       transport: this.transport,
       browserName: this.browserName,
+      enginePreference: this.enginePreference,
       endpoint: this.endpoint,
       persistent: this.persistent,
       createdAt: new Date().toISOString(),
@@ -461,19 +464,29 @@ class SessionServer {
   }
 
   async collectTree() {
-    return this.page.evaluate(() => window.__RDT_CLI_RUNTIME__.collectTree());
+    return this.page.evaluate((preferredEngine) => window.__RDT_CLI_RUNTIME__.collectTree(preferredEngine), this.enginePreference);
   }
 
   async peekTree() {
-    return this.page.evaluate(() => window.__RDT_CLI_RUNTIME__.peekTree());
+    return this.page.evaluate((preferredEngine) => window.__RDT_CLI_RUNTIME__.peekTree(preferredEngine), this.enginePreference);
+  }
+
+  async getEngineInfo() {
+    return this.page.evaluate((preferredEngine) => window.__RDT_CLI_RUNTIME__.getEngineInfo(preferredEngine), this.enginePreference);
   }
 
   async status() {
     const tree = await this.peekTree();
+    const engineInfo = await this.getEngineInfo();
     return {
       sessionName: this.sessionName,
       transport: this.transport,
       browserName: this.browserName,
+      enginePreference: this.enginePreference,
+      selectedEngine: engineInfo.selectedEngine,
+      availableEngines: engineInfo.availableEngines,
+      recommendedEngine: engineInfo.recommendedEngine,
+      engineFallback: engineInfo.engineFallback,
       endpoint: this.endpoint,
       persistent: this.persistent,
       target: this.page.url(),
@@ -489,7 +502,10 @@ class SessionServer {
   }
 
   async doctor() {
-    const runtimeDoctor = unwrapRuntimeResult(await this.page.evaluate(() => window.__RDT_CLI_RUNTIME__.doctor()));
+    const runtimeDoctor = unwrapRuntimeResult(await this.page.evaluate(
+      (preferredEngine) => window.__RDT_CLI_RUNTIME__.doctor(preferredEngine),
+      this.enginePreference,
+    ));
     const externalImport = checkExternalNodePlaywrightImport();
     const runtimeWarnings = runtimeDoctor.runtimeWarnings.slice();
     let helperScriptWarning = null;
@@ -538,6 +554,14 @@ class SessionServer {
       sessionName: this.sessionName,
       transport: this.transport,
       browserName: this.browserName,
+      enginePreference: this.enginePreference,
+      availableEngines: runtimeDoctor.availableEngines,
+      selectedEngine: runtimeDoctor.selectedEngine,
+      recommendedEngine: runtimeDoctor.recommendedEngine,
+      engineFallback: runtimeDoctor.engineFallback,
+      engineReasons: runtimeDoctor.engineReasons,
+      devtoolsCapabilities: runtimeDoctor.devtoolsCapabilities,
+      sourceCapability: runtimeDoctor.sourceCapability,
       target: this.page.url(),
       status,
       observationLevel: "observed",
@@ -756,23 +780,26 @@ class SessionServer {
         await this.ensureReactDetected();
         return unwrapRuntimeResult(await this.page.evaluate(
           ({ nodeId, snapshotId, commitId }) => window.__RDT_CLI_RUNTIME__.inspectNode(nodeId, snapshotId, commitId),
-          payload,
+          { ...payload, preferredEngine: this.enginePreference },
         ));
       case "node.search":
         await this.ensureReactDetected();
         return unwrapRuntimeResult(await this.page.evaluate(
-          ({ query, snapshotId }) => window.__RDT_CLI_RUNTIME__.searchNodes(query, snapshotId),
-          payload,
+          ({ query, snapshotId, preferredEngine }) => window.__RDT_CLI_RUNTIME__.searchNodes(query, snapshotId, preferredEngine),
+          { ...payload, preferredEngine: this.enginePreference },
         ));
       case "node.highlight":
         await this.ensureReactDetected();
         return unwrapRuntimeResult(await this.page.evaluate(
-          ({ nodeId, snapshotId }) => window.__RDT_CLI_RUNTIME__.highlightNode(nodeId, snapshotId),
-          payload,
+          ({ nodeId, snapshotId, preferredEngine }) => window.__RDT_CLI_RUNTIME__.highlightNode(nodeId, snapshotId, preferredEngine),
+          { ...payload, preferredEngine: this.enginePreference },
         ));
       case "node.pick":
         await this.ensureReactDetected();
-        return this.page.evaluate((timeoutMs) => window.__RDT_CLI_RUNTIME__.pickNode(timeoutMs), payload.timeoutMs ?? 30000);
+        return this.page.evaluate(
+          ({ timeoutMs, preferredEngine }) => window.__RDT_CLI_RUNTIME__.pickNode(timeoutMs, preferredEngine),
+          { timeoutMs: payload.timeoutMs ?? 30000, preferredEngine: this.enginePreference },
+        );
       case "interact.click":
         return this.interact("click", payload);
       case "interact.type":
@@ -783,7 +810,10 @@ class SessionServer {
         return this.interact("wait", payload);
       case "profiler.start":
         await this.ensureReactDetected();
-        return this.page.evaluate((profileId) => window.__RDT_CLI_RUNTIME__.startProfiler(profileId), payload.profileId);
+        return this.page.evaluate(
+          ({ profileId, preferredEngine }) => window.__RDT_CLI_RUNTIME__.startProfiler(profileId, preferredEngine),
+          { profileId: payload.profileId, preferredEngine: this.enginePreference },
+        );
       case "profiler.stop":
         await this.ensureReactDetected();
         return this.page.evaluate(() => window.__RDT_CLI_RUNTIME__.stopProfiler());
@@ -825,10 +855,10 @@ class SessionServer {
         ));
       case "source.reveal":
         await this.ensureReactDetected();
-        return unwrapRuntimeResult(await this.page.evaluate(({ nodeId, snapshotId, commitId }) => {
-          const node = window.__RDT_CLI_RUNTIME__.inspectNode(nodeId, snapshotId, commitId);
+        return unwrapRuntimeResult(await this.page.evaluate(({ nodeId, snapshotId, commitId, preferredEngine }) => {
+          const node = window.__RDT_CLI_RUNTIME__.inspectNode(nodeId, snapshotId, commitId, preferredEngine);
           return node ? node.source : null;
-        }, payload));
+        }, { ...payload, preferredEngine: this.enginePreference }));
       default:
         throw new CliError(`Unsupported action: ${action}`, { code: "unsupported-action" });
     }

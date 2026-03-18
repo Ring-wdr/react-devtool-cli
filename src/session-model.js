@@ -2,6 +2,7 @@ import { CliError } from "./errors.js";
 
 export const SUPPORTED_TRANSPORTS = new Set(["open", "connect", "attach"]);
 export const SUPPORTED_BROWSERS = new Set(["chromium", "firefox", "webkit"]);
+export const SUPPORTED_ENGINES = new Set(["auto", "custom", "devtools"]);
 
 export function normalizeTransport(value) {
   const transport = value ? String(value) : "open";
@@ -29,6 +30,17 @@ export function normalizeBrowserName(value, transport = "open") {
   }
 
   return browserName;
+}
+
+export function normalizeEngine(value) {
+  const engine = value ? String(value) : "auto";
+  if (!SUPPORTED_ENGINES.has(engine)) {
+    throw new CliError(`Unsupported engine: ${engine}`, {
+      code: "unsupported-engine",
+    });
+  }
+
+  return engine;
 }
 
 export function resolveTimeoutMs(options = {}) {

@@ -9,6 +9,7 @@ import {
   buildSessionCapabilities,
   getSessionEndpoint,
   normalizeBrowserName,
+  normalizeEngine,
   normalizeTransport,
   resolveTimeoutMs,
 } from "../src/session-model.js";
@@ -85,6 +86,20 @@ run("parseArgv preserves session doctor options", () => {
   assert.deepEqual(parsed.positionals, ["session", "doctor"]);
   assert.equal(parsed.options.session, "app");
   assert.equal(parsed.options.format, "pretty");
+});
+
+run("parseArgv preserves session engine preference", () => {
+  const parsed = parseArgv([
+    "session",
+    "open",
+    "--url",
+    "http://localhost:3000",
+    "--engine",
+    "devtools",
+  ]);
+
+  assert.deepEqual(parsed.positionals, ["session", "open"]);
+  assert.equal(parsed.options.engine, "devtools");
 });
 
 run("parseArgv preserves profiler commit positionals and limits", () => {
@@ -188,7 +203,10 @@ run("formatOutput renders pretty output", () => {
 run("session-model normalizes transports and browser names", () => {
   assert.equal(normalizeTransport("connect"), "connect");
   assert.equal(normalizeBrowserName("webkit", "open"), "webkit");
+  assert.equal(normalizeEngine("auto"), "auto");
+  assert.equal(normalizeEngine("devtools"), "devtools");
   assert.throws(() => normalizeBrowserName("firefox", "attach"), /CDP attach mode only supports Chromium/);
+  assert.throws(() => normalizeEngine("unknown"), /Unsupported engine/);
 });
 
 run("session-model resolves timeout and endpoint", () => {

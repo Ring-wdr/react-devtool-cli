@@ -9,6 +9,9 @@ export function runtimeBootstrap() {
   const ACTUAL_DURATION = "actual-duration";
   const MIXED = "mixed";
   const COMMIT = "commit";
+  const ENGINE_AUTO = "auto";
+  const ENGINE_CUSTOM = "custom";
+  const ENGINE_DEVTOOLS = "devtools";
   const NO_REACT_WARNING = "No React fiber roots were detected on the current page";
   const NO_SOURCE_WARNING = "_debugSource unavailable for this node in the current build";
   const DOCTOR_SOURCE_WARNING = "_debugSource is unavailable for the inspected node in the current build";
@@ -36,6 +39,7 @@ export function runtimeBootstrap() {
     profiler: {
       active: false,
       profileId: null,
+      enginePreference: ENGINE_AUTO,
       startedAt: null,
       stoppedAt: null,
       events: [],
@@ -72,6 +76,161 @@ export function runtimeBootstrap() {
       limitations.splice(1, 0, "component durations are not measured");
     }
     return limitations;
+  }
+
+  function normalizeEnginePreference(value) {
+    if (value === ENGINE_CUSTOM || value === ENGINE_DEVTOOLS) {
+      return value;
+    }
+
+    return ENGINE_AUTO;
+  }
+
+  function detectDurationMetricsFromRoots() {
+    const stack = [];
+    for (const entry of state.roots.values()) {
+      const current = entry.root?.current?.child || null;
+      if (current) {
+        stack.push(current);
+      }
+    }
+
+    while (stack.length) {
+      const fiber = stack.pop();
+      if (!fiber) {
+        continue;
+      }
+
+      if (typeof fiber.actualDuration === "number") {
+        return true;
+      }
+
+      if (fiber.sibling) {
+        stack.push(fiber.sibling);
+      }
+
+      if (fiber.child) {
+        stack.push(fiber.child);
+      }
+    }
+
+    return false;
+  }
+
+  function getRendererVersions() {
+    const versions = [];
+    for (const renderer of state.renderers.values()) {
+      const version = renderer?.version || renderer?.reconcilerVersion || null;
+      if (version && !versions.includes(String(version))) {
+        versions.push(String(version));
+      }
+    }
+    return versions;
+  }
+
+  function getHighestRendererMajor(versions) {
+    const majors = (versions || [])
+      .map((version) => Number.parseInt(String(version).split(".")[0], 10))
+      .filter((value) => Number.isInteger(value));
+
+    if (!majors.length) {
+      return null;
+    }
+
+    return Math.max(...majors);
+  }
+
+  function getSourceCapability(details) {
+    const rendererVersions = getRendererVersions();
+    const highestRendererMajor = getHighestRendererMajor(rendererVersions);
+    if (details?.source) {
+      return {
+        status: "ok",
+        mode: "legacy-debug-source",
+        available: true,
+        rendererVersions,
+        reason: "_debugSource is available for the inspected node",
+      };
+    }
+
+    const react19OrNewer = highestRendererMajor != null && highestRendererMajor >= 19;
+    return {
+      status: "partial",
+      mode: react19OrNewer ? "react19-removed-or-build-stripped" : "build-stripped-or-unavailable",
+      available: false,
+      rendererVersions,
+      reason: react19OrNewer
+        ? "React 19+ commonly omits _debugSource; source reveal is treated as an optional capability only"
+        : "_debugSource is unavailable in the current build or runtime",
+    };
+  }
+
+  function detectDevtoolsCapabilities(preferredEngine) {
+    const hook = window.__REACT_DEVTOOLS_GLOBAL_HOOK__ || null;
+    const rendererCount = state.renderers.size;
+    const rendererVersions = getRendererVersions();
+    const rootCount = Array.from(state.roots.values()).filter((entry) => entry.root?.current?.child).length;
+    const reactDetected = rootCount > 0;
+    const durationMetricsAvailable = detectDurationMetricsFromRoots();
+    const canUseDevtoolsEngine = Boolean(hook) && rendererCount > 0 && rootCount > 0;
+    const normalizedPreference = normalizeEnginePreference(preferredEngine);
+    const recommendedEngine = canUseDevtoolsEngine ? ENGINE_DEVTOOLS : ENGINE_CUSTOM;
+    const selectedEngine = normalizedPreference === ENGINE_AUTO
+      ? recommendedEngine
+      : (normalizedPreference === ENGINE_DEVTOOLS && canUseDevtoolsEngine ? ENGINE_DEVTOOLS : ENGINE_CUSTOM);
+
+    return {
+      hookPresent: Boolean(hook),
+      rendererCount,
+      rendererVersions,
+      rootCount,
+      reactDetected,
+      durationMetricsAvailable,
+      canUseDevtoolsEngine,
+      inspectionAvailable: reactDetected,
+      profilerAvailable: reactDetected,
+      selectedEngine,
+      recommendedEngine,
+      availableEngines: canUseDevtoolsEngine
+        ? [ENGINE_CUSTOM, ENGINE_DEVTOOLS]
+        : [ENGINE_CUSTOM],
+      enginePreference: normalizedPreference,
+      engineFallback: normalizedPreference === ENGINE_DEVTOOLS && selectedEngine !== ENGINE_DEVTOOLS,
+      engineReasons: canUseDevtoolsEngine
+        ? [
+            "React renderer roots are available through the DevTools global hook",
+            durationMetricsAvailable
+              ? "React runtime exposes duration metrics for at least one live fiber"
+              : "DevTools-aligned engine is available, but duration metrics are not exposed in the current runtime",
+          ]
+        : [
+            "Falling back to the custom engine because DevTools-aligned renderer data is not yet available on this page",
+          ],
+    };
+  }
+
+  function buildEngineMetadata(preferredEngine) {
+    const capabilities = detectDevtoolsCapabilities(preferredEngine);
+    return {
+      enginePreference: capabilities.enginePreference,
+      engine: capabilities.selectedEngine,
+      selectedEngine: capabilities.selectedEngine,
+      recommendedEngine: capabilities.recommendedEngine,
+      availableEngines: capabilities.availableEngines,
+      engineFallback: capabilities.engineFallback,
+      engineReasons: capabilities.engineReasons,
+      inspectionSource: capabilities.selectedEngine === ENGINE_DEVTOOLS ? "devtools-aligned-fiber" : "custom-fiber",
+      measurementSource: capabilities.selectedEngine === ENGINE_DEVTOOLS ? "devtools-aligned-profiler" : "custom-profiler",
+      snapshotModel: capabilities.selectedEngine === ENGINE_DEVTOOLS ? "snapshot-scoped-devtools-aligned" : "snapshot-scoped-custom",
+      devtoolsCapabilities: {
+        hookPresent: capabilities.hookPresent,
+        rendererCount: capabilities.rendererCount,
+        rootCount: capabilities.rootCount,
+        durationMetricsAvailable: capabilities.durationMetricsAvailable,
+        inspectionAvailable: capabilities.inspectionAvailable,
+        profilerAvailable: capabilities.profilerAvailable,
+      },
+    };
   }
 
   function createRuntimeError(code, message, details) {
@@ -268,8 +427,10 @@ export function runtimeBootstrap() {
     return commonLimitations.snapshot.slice();
   }
 
-  function getObservedTree(runtimeWarnings, tree) {
+  function getObservedTree(runtimeWarnings, tree, preferredEngine) {
+    const engineMeta = buildEngineMetadata(preferredEngine);
     return {
+      ...engineMeta,
       snapshotId: null,
       snapshotScoped: true,
       identityStableAcrossCommits: false,
@@ -402,19 +563,28 @@ export function runtimeBootstrap() {
   }
 
   function findHostDescendant(fiber) {
-    let current = fiber?.child || null;
+    const stack = [];
+    if (fiber?.child) {
+      stack.push(fiber.child);
+    }
 
-    while (current) {
+    while (stack.length) {
+      const current = stack.pop();
+      if (!current) {
+        continue;
+      }
+
       if (current.tag === 5 && current.stateNode instanceof Element) {
         return current;
       }
 
-      const child = findHostDescendant(current);
-      if (child) {
-        return child;
+      if (current.sibling) {
+        stack.push(current.sibling);
       }
 
-      current = current.sibling || null;
+      if (current.child) {
+        stack.push(current.child);
+      }
     }
 
     return null;
@@ -459,8 +629,10 @@ export function runtimeBootstrap() {
     };
   }
 
-  function buildNodeDetails(fiber, node) {
+  function buildNodeDetails(fiber, node, preferredEngine) {
+    const engineMeta = buildEngineMetadata(preferredEngine);
     return {
+      ...engineMeta,
       snapshotId: null,
       snapshotScoped: true,
       identityStableAcrossCommits: false,
@@ -482,7 +654,7 @@ export function runtimeBootstrap() {
     };
   }
 
-  function traverseFiberTree(fiber, parentId, depth, rootId, output, nodeDetails, nodeMetrics, nodeMeta, parentAnalyzerKey) {
+  function traverseFiberTree(fiber, parentId, depth, rootId, output, nodeDetails, nodeMetrics, nodeMeta, parentAnalyzerKey, preferredEngine) {
     let current = fiber;
     let siblingIndex = 0;
 
@@ -497,7 +669,7 @@ export function runtimeBootstrap() {
         siblingIndex,
       ].join("|");
       output.push(node);
-      nodeDetails.set(node.id, buildNodeDetails(current, node));
+      nodeDetails.set(node.id, buildNodeDetails(current, node, preferredEngine));
       nodeMetrics.set(node.id, getDurationMetrics(current));
       nodeMeta.set(node.id, {
         analyzerKey,
@@ -505,7 +677,7 @@ export function runtimeBootstrap() {
       });
 
       if (current.child) {
-        traverseFiberTree(current.child, node.id, depth + 1, rootId, output, nodeDetails, nodeMetrics, nodeMeta, analyzerKey);
+        traverseFiberTree(current.child, node.id, depth + 1, rootId, output, nodeDetails, nodeMetrics, nodeMeta, analyzerKey, preferredEngine);
       }
 
       current = current.sibling;
@@ -543,7 +715,7 @@ export function runtimeBootstrap() {
     }
   }
 
-  function collectLiveTree() {
+  function collectLiveTree(preferredEngine) {
     const roots = [];
     const nodes = [];
     const nodeDetails = new Map();
@@ -563,7 +735,7 @@ export function runtimeBootstrap() {
         nodeId: getFiberId(current.child),
       });
 
-      traverseFiberTree(current.child, null, 0, entry.rootId, nodes, nodeDetails, nodeMetrics, nodeMeta, null);
+      traverseFiberTree(current.child, null, 0, entry.rootId, nodes, nodeDetails, nodeMetrics, nodeMeta, null, preferredEngine);
     }
 
     finalizeNodeMetrics(nodes, nodeMetrics);
@@ -580,8 +752,10 @@ export function runtimeBootstrap() {
     };
   }
 
-  function serializeSnapshot(snapshot) {
+  function serializeSnapshot(snapshot, preferredEngine) {
+    const engineMeta = buildEngineMetadata(preferredEngine);
     return {
+      ...engineMeta,
       snapshotId: snapshot.snapshotId,
       snapshotScoped: true,
       identityStableAcrossCommits: false,
@@ -596,7 +770,7 @@ export function runtimeBootstrap() {
     };
   }
 
-  function cacheSnapshot(tree) {
+  function cacheSnapshot(tree, preferredEngine) {
     const snapshotId = "snapshot-" + state.nextSnapshotId++;
     const snapshot = {
       snapshotId,
@@ -626,6 +800,7 @@ export function runtimeBootstrap() {
           ...meta,
         },
       ])),
+      enginePreference: normalizeEnginePreference(preferredEngine),
     };
 
     state.snapshots.set(snapshot.snapshotId, snapshot);
@@ -634,22 +809,22 @@ export function runtimeBootstrap() {
     return snapshot;
   }
 
-  function collectTree() {
-    const liveTree = collectLiveTree();
+  function collectTree(preferredEngine) {
+    const liveTree = collectLiveTree(preferredEngine);
     if (!liveTree.reactDetected) {
-      return getObservedTree([NO_REACT_WARNING], liveTree);
+      return getObservedTree([NO_REACT_WARNING], liveTree, preferredEngine);
     }
 
-    const snapshot = cacheSnapshot(liveTree);
-    return serializeSnapshot(snapshot);
+    const snapshot = cacheSnapshot(liveTree, preferredEngine);
+    return serializeSnapshot(snapshot, preferredEngine);
   }
 
-  function peekTree() {
-    const liveTree = collectLiveTree();
-    return getObservedTree(liveTree.reactDetected ? [] : [NO_REACT_WARNING], liveTree);
+  function peekTree(preferredEngine) {
+    const liveTree = collectLiveTree(preferredEngine);
+    return getObservedTree(liveTree.reactDetected ? [] : [NO_REACT_WARNING], liveTree, preferredEngine);
   }
 
-  function resolveSnapshot(snapshotId, createIfMissing = true) {
+  function resolveSnapshot(snapshotId, createIfMissing = true, preferredEngine) {
     if (snapshotId) {
       return state.snapshots.get(snapshotId) || createRuntimeError(
         "snapshot-expired",
@@ -666,7 +841,7 @@ export function runtimeBootstrap() {
       return null;
     }
 
-    const snapshot = collectTree();
+    const snapshot = collectTree(preferredEngine);
     if (!snapshot.reactDetected || !snapshot.snapshotId) {
       return null;
     }
@@ -678,7 +853,7 @@ export function runtimeBootstrap() {
     return state.profiler.events.find((event) => event.eventType === COMMIT && event.commitId === commitId) || null;
   }
 
-  function inspectNode(nodeId, snapshotId, commitId) {
+  function inspectNode(nodeId, snapshotId, commitId, preferredEngine) {
     if (commitId) {
       const commit = getProfilerCommit(commitId);
       if (!commit) {
@@ -695,6 +870,7 @@ export function runtimeBootstrap() {
       }
 
       return {
+        ...buildEngineMetadata(preferredEngine || commit.enginePreference),
         ...details,
         commitId,
         profiler: commit.nodeAnalysisById[nodeId] || null,
@@ -702,7 +878,7 @@ export function runtimeBootstrap() {
       };
     }
 
-    const snapshot = resolveSnapshot(snapshotId);
+    const snapshot = resolveSnapshot(snapshotId, true, preferredEngine);
     if (snapshot?.__rdtError) {
       return snapshot;
     }
@@ -715,8 +891,8 @@ export function runtimeBootstrap() {
     return details;
   }
 
-  function searchNodes(query, snapshotId) {
-    const snapshot = resolveSnapshot(snapshotId);
+  function searchNodes(query, snapshotId, preferredEngine) {
+    const snapshot = resolveSnapshot(snapshotId, true, preferredEngine);
     if (snapshot?.__rdtError) {
       return snapshot;
     }
@@ -731,6 +907,7 @@ export function runtimeBootstrap() {
     }).map((node) => ({
       ...node,
       snapshotId: snapshot.snapshotId,
+      engine: buildEngineMetadata(preferredEngine).selectedEngine,
     }));
   }
 
@@ -753,8 +930,8 @@ export function runtimeBootstrap() {
     return overlay;
   }
 
-  function highlightNode(nodeId, snapshotId) {
-    const details = inspectNode(nodeId, snapshotId);
+  function highlightNode(nodeId, snapshotId, preferredEngine) {
+    const details = inspectNode(nodeId, snapshotId, null, preferredEngine);
     if (details?.__rdtError) {
       return details;
     }
@@ -786,9 +963,9 @@ export function runtimeBootstrap() {
     return null;
   }
 
-  function pickNode(timeoutMs) {
+  function pickNode(timeoutMs, preferredEngine) {
     return new Promise((resolve) => {
-      const snapshot = collectTree();
+      const snapshot = collectTree(preferredEngine);
       const snapshotId = snapshot.snapshotId;
 
       function cleanup(result) {
@@ -806,7 +983,7 @@ export function runtimeBootstrap() {
           return;
         }
 
-        highlightNode(getFiberId(fiber), snapshotId);
+        highlightNode(getFiberId(fiber), snapshotId, preferredEngine);
       }
 
       function handleClick(event) {
@@ -818,7 +995,7 @@ export function runtimeBootstrap() {
           return;
         }
 
-        cleanup(inspectNode(getFiberId(fiber), snapshotId));
+        cleanup(inspectNode(getFiberId(fiber), snapshotId, null, preferredEngine));
       }
 
       document.addEventListener("mouseover", handleHover, true);
@@ -835,7 +1012,9 @@ export function runtimeBootstrap() {
 
     const measurementMode = measurementModes.length === 1 ? measurementModes[0] : MIXED;
     const measuresComponentDuration = hasDurationMetrics(measurementMode);
+    const engineMeta = buildEngineMetadata(state.profiler.enginePreference);
     return {
+      ...engineMeta,
       observationLevel: OBSERVED,
       limitations: getProfilerLimitations(measurementMode),
       runtimeWarnings: state.profiler.active ? [] : [PROFILER_FOLLOWUP_WARNING],
@@ -869,6 +1048,7 @@ export function runtimeBootstrap() {
   function getCurrentProfilerRecord() {
     return {
       profileId: state.profiler.profileId,
+      enginePreference: state.profiler.enginePreference,
       summary: summarizeProfiler(),
       events: state.profiler.events.slice(),
     };
@@ -891,9 +1071,10 @@ export function runtimeBootstrap() {
     return state.profiler.profiles.get(profileId) || null;
   }
 
-  function doctor() {
-    const tree = peekTree();
-    const liveTree = tree.reactDetected ? collectLiveTree() : null;
+  function doctor(preferredEngine) {
+    const tree = peekTree(preferredEngine);
+    const liveTree = tree.reactDetected ? collectLiveTree(preferredEngine) : null;
+    const engineMeta = buildEngineMetadata(preferredEngine);
     const liveMeasurementMode = liveTree && Array.from(liveTree.nodeMetrics.values()).some((metrics) => typeof metrics.actualDuration === "number")
       ? ACTUAL_DURATION
       : STRUCTURAL_ONLY;
@@ -931,6 +1112,7 @@ export function runtimeBootstrap() {
     if (!tree.reactDetected) {
       runtimeWarnings.push(NO_REACT_WARNING);
       return {
+        ...engineMeta,
         status: "failed",
         observationLevel: OBSERVED,
         limitations: commonLimitations.snapshot.concat(commonLimitations.inspect, getProfilerLimitations(liveMeasurementMode)),
@@ -946,18 +1128,26 @@ export function runtimeBootstrap() {
     };
 
     const firstNode = snapshot.nodes[0] || null;
+    let sourceCapability = {
+      status: "failed",
+      mode: "unverified",
+      available: false,
+      rendererVersions: getRendererVersions(),
+      reason: "No inspected node was available for source capability checks",
+    };
     if (firstNode) {
       const details = inspectNode(firstNode.id, snapshot.snapshotId);
+      sourceCapability = getSourceCapability(details);
       checks.inspect = {
         status: details ? "ok" : "failed",
         nodeId: firstNode.id,
       };
       checks.sourceReveal = {
-        status: details?.source ? "ok" : "partial",
-        available: Boolean(details?.source),
+        status: sourceCapability.status,
+        available: sourceCapability.available,
       };
-      if (!details?.source) {
-        runtimeWarnings.push(DOCTOR_SOURCE_WARNING);
+      if (!sourceCapability.available) {
+        runtimeWarnings.push(sourceCapability.reason);
       }
     }
 
@@ -968,11 +1158,13 @@ export function runtimeBootstrap() {
     );
 
     return {
+      ...engineMeta,
       status: runtimeWarnings.length ? "partial" : "ok",
       observationLevel: OBSERVED,
       limitations: commonLimitations.snapshot.concat(commonLimitations.inspect, getProfilerLimitations(liveMeasurementMode)),
       runtimeWarnings,
       checks,
+      sourceCapability,
       recommendedWorkflow: [
         "run tree get to capture a snapshotId",
         "reuse snapshotId for node search, inspect, highlight, and source reveal",
@@ -982,7 +1174,7 @@ export function runtimeBootstrap() {
       unsafeConclusions: [
         "all matching nodes rerendered solely because they appear in the tree",
         "component-level timing is available when measurementMode is structural-only",
-        "source reveal is unsupported just because _debugSource is unavailable",
+        "engine selection should change solely because _debugSource is unavailable",
       ],
     };
   }
@@ -1200,6 +1392,8 @@ export function runtimeBootstrap() {
       : STRUCTURAL_ONLY;
 
     return {
+      engine: buildEngineMetadata(state.profiler.enginePreference).selectedEngine,
+      enginePreference: state.profiler.enginePreference,
       eventType: COMMIT,
       commitId,
       timestamp: new Date().toISOString(),
@@ -1257,6 +1451,7 @@ export function runtimeBootstrap() {
   function listProfilerCommits() {
     return getCommitEvents()
       .map((commit) => ({
+        ...buildEngineMetadata(commit.enginePreference),
         ...getCommitObservation(getCommitMeasurementMode(commit), COMMIT_LIST_WARNING, [
           SNAPSHOT_DIFF_LIMITATION,
         ]),
@@ -1297,6 +1492,7 @@ export function runtimeBootstrap() {
     });
 
     return {
+      ...buildEngineMetadata(commit.enginePreference),
       ...getCommitObservation(getCommitMeasurementMode(commit), COMMIT_DETAIL_WARNING, [
         COMMIT_DETAIL_WARNING,
         SNAPSHOT_DIFF_LIMITATION,
@@ -1442,6 +1638,7 @@ export function runtimeBootstrap() {
       item.hotspotLabel = getHotspotLabel(item);
     }
     return {
+      ...buildEngineMetadata(commit.enginePreference),
       ...getCommitObservation(measurementMode, COMMIT_RANKING_WARNING, [
         RANKING_FALLBACK_LIMITATION,
         SNAPSHOT_DIFF_LIMITATION,
@@ -1505,6 +1702,7 @@ export function runtimeBootstrap() {
     }
 
     return {
+      ...buildEngineMetadata(commit.enginePreference),
       ...getCommitObservation(getCommitMeasurementMode(commit), COMMIT_FLAMEGRAPH_WARNING, [
         FLAMEGRAPH_FALLBACK_LIMITATION,
         SNAPSHOT_DIFF_LIMITATION,
@@ -1525,7 +1723,7 @@ export function runtimeBootstrap() {
       return;
     }
 
-    const liveTree = collectLiveTree();
+    const liveTree = collectLiveTree(state.profiler.enginePreference);
     const commit = buildCommitEvent(rendererId, rootState, priorityLevel, liveTree);
     const previousCommit = getCommitEvents().slice(-1)[0] || null;
     const diff = buildCommitDiff(previousCommit, commit);
@@ -1574,15 +1772,19 @@ export function runtimeBootstrap() {
   window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = hook;
 
   window.__RDT_CLI_RUNTIME__ = {
+    getEngineInfo(preferredEngine) {
+      return buildEngineMetadata(preferredEngine);
+    },
     collectTree,
     peekTree,
     inspectNode,
     searchNodes,
     highlightNode,
     pickNode,
-    startProfiler(profileId) {
+    startProfiler(profileId, preferredEngine) {
       state.profiler.active = true;
       state.profiler.profileId = profileId;
+      state.profiler.enginePreference = normalizeEnginePreference(preferredEngine);
       state.profiler.startedAt = new Date().toISOString();
       state.profiler.stoppedAt = null;
       state.profiler.events = [];

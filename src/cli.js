@@ -11,7 +11,7 @@ import { parseArgv } from "./args.js";
 import { CliError, ensure, normalizeError } from "./errors.js";
 import { formatOutput } from "./format.js";
 import { requestSession } from "./http-client.js";
-import { normalizeBrowserName, normalizeTransport, resolveTimeoutMs } from "./session-model.js";
+import { normalizeBrowserName, normalizeEngine, normalizeTransport, resolveTimeoutMs } from "./session-model.js";
 import {
   createSessionName,
   ensureSessionDir,
@@ -201,6 +201,7 @@ function collectSharedSessionOptions(options, transport) {
   const timeout = resolveTimeoutMs(options);
   const result = {
     browser: normalizeBrowserName(options.browser, transport),
+    engine: normalizeEngine(options.engine),
     channel: options.channel,
     device: options.device,
     storageState: options.storageState,
@@ -709,9 +710,9 @@ Recommended flow:
   6. Use rdt doctor before profiling if helper scripts or Playwright resolution look suspicious
 
 Usage:
-  rdt session open --url <url> [--browser chromium|firefox|webkit] [--channel <name>] [--device <name>] [--storage-state <path>] [--user-data-dir <path>] [--timeout <ms>] [--headless=false] [--session <name>]
-  rdt session connect --ws-endpoint <url> [--browser chromium|firefox|webkit] [--target-url <substring>] [--timeout <ms>] [--session <name>]
-  rdt session attach --cdp-url <url> [--target-url <substring>] [--timeout <ms>] [--session <name>]
+  rdt session open --url <url> [--browser chromium|firefox|webkit] [--engine auto|custom|devtools] [--channel <name>] [--device <name>] [--storage-state <path>] [--user-data-dir <path>] [--timeout <ms>] [--headless=false] [--session <name>]
+  rdt session connect --ws-endpoint <url> [--browser chromium|firefox|webkit] [--engine auto|custom|devtools] [--target-url <substring>] [--timeout <ms>] [--session <name>]
+  rdt session attach --cdp-url <url> [--engine auto|custom|devtools] [--target-url <substring>] [--timeout <ms>] [--session <name>]
   rdt session status --session <name>
   rdt session doctor --session <name> [--format json|yaml|pretty]
   rdt session close --session <name>

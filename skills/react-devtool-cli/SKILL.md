@@ -1,6 +1,6 @@
 ---
 name: react-devtool-cli
-description: Operate and troubleshoot the published `rdt` CLI outside the source repo. Use when a user wants help installing `react-devtool-cli`, opening or attaching sessions, collecting tree snapshots, inspecting nodes, running profiler flows, interpreting `session doctor`, or understanding CLI output and trust boundaries.
+description: Operate and troubleshoot the published `rdt` CLI outside the source repo. Use when a user wants help installing `react-devtool-cli`, opening or attaching sessions, collecting tree snapshots, inspecting nodes, running profiler flows, interpreting `session doctor`, comparing custom vs DevTools-aligned engine output, or understanding CLI trust boundaries.
 ---
 
 # React Devtool CLI
@@ -23,15 +23,17 @@ Use this skill for installed-CLI workflows used by real end users after distribu
 1. Confirm how the app is launched and which transport the user can provide.
 2. Start or connect a session.
 3. Run `session doctor` before deep inspection or helper-based work.
-4. Collect a tree with `tree get` and persist `snapshotId`.
-5. Use snapshot-aware node commands with the same `snapshotId`.
-6. Run profiler commands only after a reproducible user interaction is defined.
+4. Prefer `--engine auto` unless the user explicitly wants to force `custom` or `devtools`.
+5. Collect a tree with `tree get` and persist `snapshotId`.
+6. Use snapshot-aware node commands with the same `snapshotId`.
+7. Run profiler commands only after a reproducible user interaction is defined.
 
 ## Interpretation Rules
 
 - Persist `snapshotId` from `tree get` and reuse it for `node search`, `node inspect`, `node highlight`, and `source reveal`.
 - If `snapshot-expired` appears, recollect the tree and do not reuse old node ids.
 - Read `observationLevel`, `limitations`, and `runtimeWarnings` literally.
+- Read `selectedEngine`, `engineFallback`, and `devtoolsCapabilities` literally before making profiler claims.
 - Treat `node inspect --commit <commitId>` ids as profiler-local ids, not tree snapshot ids.
 - Prefer built-in `interact` commands over ad hoc Playwright helpers when `session doctor` reports support.
 

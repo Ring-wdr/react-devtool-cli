@@ -1,8 +1,8 @@
 # react-devtool-cli
 
-Agent-first CLI for inspecting React applications through a Playwright-managed Chromium session.
+Agent-first CLI for inspecting React applications through a Playwright-managed browser session.
 
-It gives agents and engineers a structured command surface for React tree snapshots, node inspection, source reveal, deterministic browser interaction, and commit-oriented profiler analysis without opening the DevTools UI.
+It gives agents and engineers a structured command surface for React tree snapshots, node inspection, source reveal, deterministic browser interaction, and commit-oriented profiler analysis without opening the DevTools UI. The public CLI is engine-based: `auto` chooses between the current custom engine and a DevTools-aligned engine when capability checks allow it.
 
 ## Recommended architecture
 
@@ -35,7 +35,7 @@ Published package notes:
 ## Commands
 
 ```bash
-rdt session open --url http://localhost:3000 --browser chromium --session demo
+rdt session open --url http://localhost:3000 --browser chromium --engine auto --session demo
 rdt session connect --ws-endpoint ws://127.0.0.1:3000/ --target-url localhost:3000 --session remote
 rdt session attach --cdp-url http://127.0.0.1:9222 --target-url localhost:3000 --session cdp
 rdt session doctor --session demo
@@ -65,6 +65,10 @@ rdt profiler export --session demo --compress
 ## Doctor
 
 - `rdt session doctor --session <name>` reports runtime readiness and trust boundaries before a deeper investigation.
+- It also reports `enginePreference`, `selectedEngine`, `recommendedEngine`, `availableEngines`, and DevTools capability hints so agents know whether they are on a custom fallback or a DevTools-aligned path.
+- `sourceCapability` is reported separately from engine selection.
+- `_debugSource` is treated as an optional legacy source-mapping capability, not an engine-selection gate.
+- In React 19+ builds, `_debugSource` is commonly unavailable, so `source reveal` may remain partial even when `selectedEngine` is `devtools`.
 - It checks React detection, snapshot/inspect readiness, profiler capability, `_debugSource` availability, and Playwright resolution.
 - It also reports whether built-in `interact` commands are available on the current session target and whether duration metrics are exposed by the current React runtime.
 - It also warns when `rdt` itself can resolve Playwright but standalone helper scripts may still fail to `import('playwright')`.
@@ -109,6 +113,14 @@ Snapshot recovery:
 - Agents should persist the returned `snapshotId` and use it for any follow-up commands.
 
 ## Practical Workflows
+
+Engine selection:
+
+- `--engine auto` is the default and should be preferred for agent workflows.
+- `--engine custom` forces the snapshot-diff engine.
+- `--engine devtools` requests the DevTools-aligned engine and falls back to `custom` when capability checks fail.
+- Inspect `selectedEngine`, `engineFallback`, and `devtoolsCapabilities` from `session doctor` before trusting profiler fidelity.
+- Do not use `_debugSource` availability as a reason to override `selectedEngine`; source mapping is tracked independently via `sourceCapability`.
 
 Performance triage flow:
 

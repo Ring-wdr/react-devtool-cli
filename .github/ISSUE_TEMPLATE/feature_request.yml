@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose a focused improvement to react-devtool-cli
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project is maintained by one person. Please describe the user problem and why it belongs in the CLI surface.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What user task is blocked or made harder today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the command, output shape, or workflow change you want
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing commands, scripting, or workarounds you tried
+    validations:
+      required: true
+  - type: textarea
+    id: maintenance
+    attributes:
+      label: Maintenance tradeoffs
+      description: Why should this be maintained in-core rather than documented as an external workflow?

@@ -24,6 +24,14 @@ Published package notes:
 - npm consumers receive built files from `dist/`, not the repository source tree.
 - repository-only validation artifacts, handoff docs, and local test fixtures are intentionally excluded from the published package.
 
+## Public Repository Expectations
+
+- This project is maintained by a single maintainer.
+- Issues, PRs, and releases are handled on a best-effort basis with no response SLA.
+- Reproducible bug reports and narrowly scoped feature proposals are much more likely to be actioned than open-ended support requests.
+- Before opening a PR or issue, read [CONTRIBUTING.md](./CONTRIBUTING.md) and [SECURITY.md](./SECURITY.md).
+- Maintainer operating principles for the public repo are documented in [docs/public-repo-strategy.md](./docs/public-repo-strategy.md).
+
 `rdt` resolves Playwright in this order:
 
 - local `playwright`

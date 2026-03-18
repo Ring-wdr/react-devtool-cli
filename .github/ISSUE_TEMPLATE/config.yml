@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Usage and command semantics
+    url: https://github.com/Ring-wdr/react-devtool-cli/blob/main/README.md
+    about: Check the README for supported workflows and response semantics before opening an issue.
+  - name: Contribution guide
+    url: https://github.com/Ring-wdr/react-devtool-cli/blob/main/CONTRIBUTING.md
+    about: Read the maintainer model and contribution expectations before opening feature requests or pull requests.

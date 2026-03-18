@@ -2,6 +2,8 @@
 
 Agent-first CLI for inspecting React applications through a Playwright-managed Chromium session.
 
+It gives agents and engineers a structured command surface for React tree snapshots, node inspection, source reveal, deterministic browser interaction, and commit-oriented profiler analysis without opening the DevTools UI.
+
 ## Recommended architecture
 
 - `rdt` talks to Playwright directly through the Node API

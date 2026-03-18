@@ -1,8 +1,28 @@
 {
   "name": "react-devtool-cli",
   "version": "0.1.31",
-  "description": "Agent-first CLI for inspecting React applications through a Playwright-managed browser session.",
+  "description": "Agent-first CLI for React component tree inspection, snapshot-aware node debugging, and profiler analysis through a Playwright-managed browser session.",
   "type": "module",
+  "homepage": "https://github.com/Ring-wdr/react-devtool-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ring-wdr/react-devtool-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Ring-wdr/react-devtool-cli/issues"
+  },
+  "keywords": [
+    "react",
+    "react-devtools",
+    "react-profiler",
+    "debugging",
+    "inspection",
+    "cli",
+    "playwright",
+    "browser-automation",
+    "component-tree",
+    "agent-tooling"
+  ],
   "files": [
     "dist/",
     "README.md"

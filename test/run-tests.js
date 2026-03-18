@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import http from "node:http";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { gzipSync } from "node:zlib";
 
 import { parseArgv } from "../src/args.js";
-import { closeSessionWithFallback, forceKillProcessTree } from "../src/cli.js";
+import { closeSessionWithFallback, compareProfiles, forceKillProcessTree, parseProfilerExportFile } from "../src/cli.js";
 import { formatOutput } from "../src/format.js";
 import { requestSession } from "../src/http-client.js";
 import {
@@ -167,6 +171,108 @@ run("parseArgv preserves profiler compare options", () => {
   assert.deepEqual(parsed.positionals, ["profiler", "compare"]);
   assert.equal(parsed.options.left, "profile-a");
   assert.equal(parsed.options.right, "profile-b");
+});
+
+run("parseProfilerExportFile preserves summary engine metadata", async () => {
+  const tempPath = path.join(os.tmpdir(), `rdt-profiler-${Date.now()}.jsonl.gz`);
+  const lines = [
+    JSON.stringify({
+      profileId: "baseline",
+      recordType: "summary",
+      engine: "devtools",
+      enginePreference: "auto",
+      selectedEngine: "devtools",
+      measurementSource: "devtools-hook-profiler",
+      summary: {
+        profileId: "baseline",
+        selectedEngine: "devtools",
+        enginePreference: "auto",
+        measurementSource: "devtools-hook-profiler",
+        measurementMode: "actual-duration",
+        measuresComponentDuration: true,
+        commitCount: 1,
+        maxNodeCount: 10,
+        averageNodeCount: 10,
+      },
+    }),
+    JSON.stringify({
+      profileId: "baseline",
+      recordType: "event",
+      eventType: "commit",
+      timestamp: "2026-03-18T00:00:00.000Z",
+      payload: {
+        eventType: "commit",
+        commitId: "commit-1",
+        timestamp: "2026-03-18T00:00:00.000Z",
+        reasonCounts: {},
+        topChangedProps: [],
+        topChangedHooks: [],
+        topChangedContexts: [],
+        changedDescendantCounts: {},
+        nodeMetricsById: {},
+      },
+    }),
+  ];
+  await fs.writeFile(tempPath, gzipSync(Buffer.from(`${lines.join("\n")}\n`, "utf8")));
+  try {
+    const parsed = await parseProfilerExportFile(tempPath);
+    assert.equal(parsed.summary.selectedEngine, "devtools");
+    assert.equal(parsed.summary.enginePreference, "auto");
+    assert.equal(parsed.summary.measurementSource, "devtools-hook-profiler");
+  } finally {
+    await fs.rm(tempPath, { force: true });
+  }
+});
+
+run("compareProfiles uses parsed export engine metadata", async () => {
+  const tempPath = path.join(os.tmpdir(), `rdt-profiler-${Date.now()}-compare.jsonl.gz`);
+  const lines = [
+    JSON.stringify({
+      profileId: "candidate",
+      recordType: "summary",
+      engine: "custom",
+      enginePreference: "custom",
+      selectedEngine: "custom",
+      measurementSource: "custom-snapshot-profiler",
+      summary: {
+        profileId: "candidate",
+        selectedEngine: "custom",
+        enginePreference: "custom",
+        measurementSource: "custom-snapshot-profiler",
+        measurementMode: "structural-only",
+        measuresComponentDuration: false,
+        commitCount: 1,
+        maxNodeCount: 5,
+        averageNodeCount: 5,
+      },
+    }),
+    JSON.stringify({
+      profileId: "candidate",
+      recordType: "event",
+      eventType: "commit",
+      timestamp: "2026-03-18T00:00:00.000Z",
+      payload: {
+        eventType: "commit",
+        commitId: "commit-1",
+        timestamp: "2026-03-18T00:00:00.000Z",
+        reasonCounts: {},
+        topChangedProps: [],
+        topChangedHooks: [],
+        topChangedContexts: [],
+        changedDescendantCounts: {},
+        nodeMetricsById: {},
+      },
+    }),
+  ];
+  await fs.writeFile(tempPath, gzipSync(Buffer.from(`${lines.join("\n")}\n`, "utf8")));
+  try {
+    const parsed = await parseProfilerExportFile(tempPath);
+    const compared = compareProfiles(parsed, parsed);
+    assert.equal(compared.leftEngine, "custom");
+    assert.equal(compared.rightEngine, "custom");
+  } finally {
+    await fs.rm(tempPath, { force: true });
+  }
 });
 
 run("parseArgv preserves node inspect commit option", () => {

@@ -579,12 +579,14 @@ class SessionServer {
       externalNodeCanImportPlaywright: externalImport.ok,
       externalNodeImportCheck: externalImport.status,
       helperScriptWarning,
-      recommendedWorkflow: [
+      recommendedWorkflow: runtimeDoctor.recommendedWorkflow || [
         "run session doctor before profiling or scripted interactions",
         "prefer built-in interact commands over ad hoc Playwright helper scripts",
         "capture snapshotId with tree get before node search/inspect/highlight/source",
         "use profiler commits, commit, ranked, flamegraph, and compare for follow-up analysis",
       ],
+      recommendedProfilerWorkflow: runtimeDoctor.recommendedProfilerWorkflow || [],
+      recommendedCommitSelection: runtimeDoctor.recommendedCommitSelection || [],
       unsafeConclusions: runtimeDoctor.unsafeConclusions || [
         "all matching nodes rerendered because a commit happened",
         "external helper scripts will resolve Playwright exactly like rdt does",

@@ -162,6 +162,8 @@ Profiler interpretation:
 
 - current profiler output is commit-oriented, not component-duration-oriented
 - use `commitCount`, commit timestamps, and `nodeCount` to detect suspicious update patterns
+- prefer `primaryUpdateCommitId` and `recommendedCommitIds` over blindly drilling into `commit-1`
+- read `commitKind`, `isLikelyInitialMount`, and `isInteractionCandidate` literally when deciding whether a commit represents setup noise or a user-triggered update
 - use follow-up `tree get` and `node inspect` calls to infer likely causes from changed state, props, hooks, and context
 
 `node pick` flow:
@@ -209,10 +211,17 @@ Use `node pick` when the agent knows the visible element but not the component n
 - `node inspect --commit <commitId>` expects a node id from that commit's profiler views, not from a separate `tree get` snapshot.
 - `profiler compare` can compare in-memory profile ids from the current session or exported `.jsonl` / `.jsonl.gz` profiler files.
 - Commit-oriented profiler payloads now expose:
+  - `commitKind`
+  - `isLikelyInitialMount`
+  - `isInteractionCandidate`
+  - `primaryUpdateCommitId`
+  - `recommendedCommitIds`
   - `observedReasons`
   - `inferredReasons`
   - `reasonConfidence`
 - Read them literally:
+  - `commitKind: "initial-mount"` usually means setup noise, not the user interaction you just reproduced
+  - `primaryUpdateCommitId` is the best follow-up commit candidate when one exists
   - `observedReasons` are direct diffs from adjacent commit snapshots
   - `inferredReasons` are propagation-based explanations such as `parent-render`
   - `reasonConfidence` is a CLI confidence estimate, not React-internal truth
@@ -230,6 +239,7 @@ Use `node pick` when the agent knows the visible element but not the component n
 - Default command output is `JSON`
 - Compact human-readable output supports `--format yaml` and `--format pretty`
 - Raw profiler export is `NDJSON` (`.jsonl`) or `jsonl.gz` with `--compress`
+- Exported profiler files now include profile summary metadata so file-based `profiler compare` preserves engine and measurement information.
 
 ## Skills
 

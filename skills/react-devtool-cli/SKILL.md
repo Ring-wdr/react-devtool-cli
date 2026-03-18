@@ -27,6 +27,7 @@ Use this skill for installed-CLI workflows used by real end users after distribu
 5. Collect a tree with `tree get` and persist `snapshotId`.
 6. Use snapshot-aware node commands with the same `snapshotId`.
 7. Run profiler commands only after a reproducible user interaction is defined.
+8. Prefer `primaryUpdateCommitId` or `recommendedCommitIds` over blindly drilling into `commit-1`.
 
 ## Interpretation Rules
 
@@ -34,6 +35,7 @@ Use this skill for installed-CLI workflows used by real end users after distribu
 - If `snapshot-expired` appears, recollect the tree and do not reuse old node ids.
 - Read `observationLevel`, `limitations`, and `runtimeWarnings` literally.
 - Read `selectedEngine`, `engineFallback`, and `devtoolsCapabilities` literally before making profiler claims.
+- Read `commitKind`, `isLikelyInitialMount`, `isInteractionCandidate`, `primaryUpdateCommitId`, and `recommendedCommitIds` literally before choosing a profiler commit to inspect.
 - Read `observedReasons`, `inferredReasons`, and `reasonConfidence` literally in commit/ranked/flamegraph output.
 - Treat `node inspect --commit <commitId>` ids as profiler-local ids, not tree snapshot ids.
 - Prefer built-in `interact` commands over ad hoc Playwright helpers when `session doctor` reports support.

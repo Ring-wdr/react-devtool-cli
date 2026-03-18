@@ -46,6 +46,7 @@ rdt profiler start --session demo
 rdt profiler stop --session demo
 rdt profiler summary --session demo
 rdt profiler commits --session demo
+# => prefer primaryUpdateCommitId or a commit where commitKind=update
 rdt profiler commit <commitId> --session demo
 rdt profiler ranked <commitId> --session demo --limit 10
 rdt profiler flamegraph <commitId> --session demo
@@ -53,6 +54,7 @@ rdt profiler compare --session demo --left baseline --right candidate
 ```
 
 - Treat profiler output as commit-oriented analysis.
+- Treat `commitKind`, `isLikelyInitialMount`, `isInteractionCandidate`, `primaryUpdateCommitId`, and `recommendedCommitIds` as the first pass for commit selection.
 - `profiler compare` accepts in-memory profile ids or exported `.jsonl` / `.jsonl.gz` files.
 - `node inspect --commit <commitId>` expects profiler-local node ids from that commit.
 

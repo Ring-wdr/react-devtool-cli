@@ -385,15 +385,28 @@ async function writeProfilerExport(sessionName, exported, options) {
     ? path.resolve(String(options.output))
     : path.resolve(process.cwd(), `${sessionName}-${exported.profileId || Date.now()}.jsonl${options.compress ? ".gz" : ""}`);
 
-  const lines = exported.events.map((event) =>
+  const lines = [
     JSON.stringify({
       sessionId: sessionName,
       profileId: exported.profileId,
+      recordType: "summary",
+      summary: exported.summary || null,
+      engine: exported.engine || exported.summary?.selectedEngine || null,
+      enginePreference: exported.enginePreference || exported.summary?.enginePreference || null,
+      selectedEngine: exported.selectedEngine || exported.summary?.selectedEngine || null,
+      measurementSource: exported.measurementSource || exported.summary?.measurementSource || null,
+    }),
+    ...exported.events.map((event) =>
+    JSON.stringify({
+      sessionId: sessionName,
+      profileId: exported.profileId,
+      recordType: "event",
       eventType: event.eventType,
       timestamp: event.timestamp,
       payload: event,
     }),
-  );
+    ),
+  ];
 
   const contents = `${lines.join("\n")}${lines.length ? "\n" : ""}`;
 
@@ -423,12 +436,14 @@ function isExistingPath(value) {
   }
 }
 
-async function parseProfilerExportFile(filePath) {
+export async function parseProfilerExportFile(filePath) {
   const resolvedPath = path.resolve(filePath);
   const raw = await fsPromises.readFile(resolvedPath);
   const contents = resolvedPath.endsWith(".gz") ? gunzipSync(raw).toString("utf8") : raw.toString("utf8");
   const events = [];
   let profileId = null;
+  let summary = null;
+  let exportedMeta = null;
 
   for (const line of contents.split("\n")) {
     if (!line.trim()) {
@@ -437,9 +452,31 @@ async function parseProfilerExportFile(filePath) {
 
     const parsed = JSON.parse(line);
     profileId = profileId || parsed.profileId || null;
+    if (parsed.recordType === "summary" || parsed.summary) {
+      summary = parsed.summary || summary;
+      exportedMeta = {
+        engine: parsed.engine || parsed.selectedEngine || null,
+        enginePreference: parsed.enginePreference || null,
+        selectedEngine: parsed.selectedEngine || parsed.engine || null,
+        measurementSource: parsed.measurementSource || null,
+      };
+      continue;
+    }
     if (parsed.payload) {
       events.push(parsed.payload);
     }
+  }
+
+  const fallbackSummary = buildProfilerArtifactSummary(profileId, events);
+  const resolvedSummary = {
+    ...fallbackSummary,
+    ...(summary || {}),
+  };
+  if (exportedMeta) {
+    resolvedSummary.engine = exportedMeta.engine || resolvedSummary.engine || null;
+    resolvedSummary.enginePreference = exportedMeta.enginePreference || resolvedSummary.enginePreference || null;
+    resolvedSummary.selectedEngine = exportedMeta.selectedEngine || resolvedSummary.selectedEngine || resolvedSummary.engine || null;
+    resolvedSummary.measurementSource = exportedMeta.measurementSource || resolvedSummary.measurementSource || null;
   }
 
   return {
@@ -447,7 +484,7 @@ async function parseProfilerExportFile(filePath) {
     sourceRef: resolvedPath,
     profileId,
     events,
-    summary: buildProfilerArtifactSummary(profileId, events),
+    summary: resolvedSummary,
   };
 }
 
@@ -541,7 +578,7 @@ function diffTopItems(leftItems, rightItems, labelKey) {
     .slice(0, 10);
 }
 
-function compareProfiles(left, right) {
+export function compareProfiles(left, right) {
   const leftAggregates = aggregateProfilerEvents(left.events);
   const rightAggregates = aggregateProfilerEvents(right.events);
   const leftSummary = left.summary || buildProfilerArtifactSummary(left.profileId, left.events);

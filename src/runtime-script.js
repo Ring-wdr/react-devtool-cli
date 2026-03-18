@@ -25,6 +25,7 @@ export function runtimeBootstrap() {
   const PROFILER_FOLLOWUP_WARNING = "Profiler data is commit-oriented only; use inspect/tree snapshots for follow-up analysis";
   const PROFILER_SOURCE_WARNING = "Profiler records component duration metrics when the current React runtime exposes them, but changed-fiber attribution is still inferred from commit snapshots";
   const PROFILER_STRUCTURAL_WARNING = "Profiler is commit-oriented only; it does not track changed fibers or component durations";
+  const INITIAL_MOUNT_WARNING = "Initial mount commits can dominate the first recorded commit after profiler start";
 
   const state = {
     nextNodeId: 1,
@@ -1079,15 +1080,20 @@ export function runtimeBootstrap() {
     const nodeCounts = commitEvents.map((event) => event.nodeCount);
     const totalNodeCount = nodeCounts.reduce((sum, count) => sum + count, 0);
     const measurementModes = [...new Set(commitEvents.map((event) => event.measurementMode || STRUCTURAL_ONLY))];
+    const commitRecommendations = getProfileCommitRecommendations(commitEvents);
 
     const measurementMode = measurementModes.length === 1 ? measurementModes[0] : MIXED;
     const measuresComponentDuration = hasDurationMetrics(measurementMode);
     const engineMeta = buildResolvedEngineMetadata(state.profiler.enginePreference, state.profiler.selectedEngine);
+    const runtimeWarnings = state.profiler.active ? [] : [PROFILER_FOLLOWUP_WARNING];
+    if (commitRecommendations.commitClassifications.some((entry) => entry.isLikelyInitialMount)) {
+      runtimeWarnings.push(INITIAL_MOUNT_WARNING);
+    }
     return {
       ...engineMeta,
       observationLevel: OBSERVED,
       limitations: getProfilerLimitations(measurementMode),
-      runtimeWarnings: state.profiler.active ? [] : [PROFILER_FOLLOWUP_WARNING],
+      runtimeWarnings,
       profileId: state.profiler.profileId,
       active: state.profiler.active,
       startedAt: state.profiler.startedAt,
@@ -1102,6 +1108,8 @@ export function runtimeBootstrap() {
       measuresComponentDuration,
       tracksChangedFibers: false,
       nodeCountMeaning: "live-tree-size-at-commit",
+      primaryUpdateCommitId: commitRecommendations.primaryUpdateCommitId,
+      recommendedCommitIds: commitRecommendations.recommendedCommitIds,
       safeConclusions: [
         "a commit occurred",
         "live tree size at commit was captured",
@@ -1116,11 +1124,14 @@ export function runtimeBootstrap() {
   }
 
   function getCurrentProfilerRecord() {
+    const summary = summarizeProfiler();
     return {
       profileId: state.profiler.profileId,
       enginePreference: state.profiler.enginePreference,
       selectedEngine: state.profiler.selectedEngine,
-      summary: summarizeProfiler(),
+      engine: summary.selectedEngine || state.profiler.selectedEngine || ENGINE_CUSTOM,
+      measurementSource: summary.measurementSource || null,
+      summary,
       events: state.profiler.events.slice(),
     };
   }
@@ -1248,7 +1259,20 @@ export function runtimeBootstrap() {
         "run tree get to capture a snapshotId",
         "reuse snapshotId for node search, inspect, highlight, and source reveal",
         "start profiler before reproducing an interaction",
+        "prefer primaryUpdateCommitId or recommendedCommitIds over blindly trusting commit-1",
         "use profiler commits, commit, ranked, and flamegraph for hotspot analysis",
+      ],
+      recommendedProfilerWorkflow: [
+        "start profiler",
+        "reproduce exactly one interaction",
+        "stop profiler",
+        "inspect primaryUpdateCommitId before drilling into commit-1",
+        "use profiler commits only when no update candidate is available",
+      ],
+      recommendedCommitSelection: [
+        "prefer commits where commitKind is update",
+        "treat initial-mount commits as setup noise unless no update commit exists",
+        "treat mixed commits as secondary follow-up candidates",
       ],
       unsafeConclusions: [
         "all matching nodes rerendered solely because they appear in the tree",
@@ -1537,8 +1561,50 @@ export function runtimeBootstrap() {
     return commit?.measurementMode || STRUCTURAL_ONLY;
   }
 
+  function classifyCommit(commit) {
+    const counts = commit?.reasonCounts || {};
+    const mounts = counts.mount || 0;
+    const unmounts = counts.unmount || 0;
+    const updateSignals = (counts["props-changed"] || 0)
+      + (counts["state-changed"] || 0)
+      + (counts["hooks-changed"] || 0)
+      + (counts["context-changed"] || 0)
+      + (counts["parent-render"] || 0);
+    const isLikelyInitialMount = mounts > 0 && unmounts === 0 && updateSignals === 0;
+    let commitKind = "mixed";
+    if (isLikelyInitialMount) {
+      commitKind = "initial-mount";
+    } else if (updateSignals > 0) {
+      commitKind = "update";
+    }
+
+    return {
+      commitKind,
+      isLikelyInitialMount,
+      isInteractionCandidate: commitKind === "update" || (commitKind === "mixed" && updateSignals > 0),
+    };
+  }
+
+  function getProfileCommitRecommendations(commitEvents) {
+    const commitClassifications = commitEvents.map((commit) => ({
+      commitId: commit.commitId,
+      changedNodeCount: commit.changedNodeIds.length,
+      ...classifyCommit(commit),
+    }));
+    const recommendedCommitIds = commitClassifications
+      .filter((entry) => entry.isInteractionCandidate && entry.changedNodeCount > 0)
+      .map((entry) => entry.commitId);
+
+    return {
+      primaryUpdateCommitId: recommendedCommitIds.length ? recommendedCommitIds[recommendedCommitIds.length - 1] : null,
+      recommendedCommitIds,
+      commitClassifications,
+    };
+  }
+
   function getCommitSummary(commit) {
     const changedNodeCount = commit.changedNodeIds.length;
+    const commitClassification = classifyCommit(commit);
     return {
       commitId: commit.commitId,
       timestamp: commit.timestamp,
@@ -1555,6 +1621,7 @@ export function runtimeBootstrap() {
       topChangedProps: commit.topChangedProps || [],
       topChangedHooks: commit.topChangedHooks || [],
       topChangedContexts: commit.topChangedContexts || [],
+      ...commitClassification,
     };
   }
 
@@ -1762,6 +1829,7 @@ export function runtimeBootstrap() {
       ]),
       commitId,
       measurementMode,
+      ...classifyCommit(commit),
       hotspotSummaries: getCommitHotspotSummaries(commit),
       items,
     };
@@ -1829,6 +1897,7 @@ export function runtimeBootstrap() {
       ]),
       commitId,
       measurementMode: getCommitMeasurementMode(commit),
+      ...classifyCommit(commit),
       ...getCommitHotspotSummaries(commit),
       roots: rootNodeIds.map((nodeId) => buildFlamegraphNode(nodeId, nodesById, childrenById, commit)),
     };

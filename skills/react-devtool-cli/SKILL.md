@@ -34,6 +34,7 @@ Use this skill for installed-CLI workflows used by real end users after distribu
 - If `snapshot-expired` appears, recollect the tree and do not reuse old node ids.
 - Read `observationLevel`, `limitations`, and `runtimeWarnings` literally.
 - Read `selectedEngine`, `engineFallback`, and `devtoolsCapabilities` literally before making profiler claims.
+- Read `observedReasons`, `inferredReasons`, and `reasonConfidence` literally in commit/ranked/flamegraph output.
 - Treat `node inspect --commit <commitId>` ids as profiler-local ids, not tree snapshot ids.
 - Prefer built-in `interact` commands over ad hoc Playwright helpers when `session doctor` reports support.
 

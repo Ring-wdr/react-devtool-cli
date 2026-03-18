@@ -29,22 +29,38 @@ export function runtimeBootstrap() {
   const state = {
     nextNodeId: 1,
     nextRootId: 1,
-    nextSnapshotId: 1,
     fiberIds: new WeakMap(),
     roots: new Map(),
     renderers: new Map(),
-    snapshots: new Map(),
-    latestSnapshotId: null,
-    maxSnapshots: 5,
+    snapshotIndex: new Map(),
+    snapshotStores: {
+      [ENGINE_CUSTOM]: {
+        nextSnapshotId: 1,
+        latestSnapshotId: null,
+        maxSnapshots: 5,
+        snapshots: new Map(),
+      },
+      [ENGINE_DEVTOOLS]: {
+        nextSnapshotId: 1,
+        latestSnapshotId: null,
+        maxSnapshots: 5,
+        snapshots: new Map(),
+      },
+    },
     profiler: {
       active: false,
       profileId: null,
       enginePreference: ENGINE_AUTO,
+      selectedEngine: ENGINE_CUSTOM,
       startedAt: null,
       stoppedAt: null,
       events: [],
       nextCommitId: 1,
-      profiles: new Map(),
+      profileIndex: new Map(),
+      profilesByEngine: {
+        [ENGINE_CUSTOM]: new Map(),
+        [ENGINE_DEVTOOLS]: new Map(),
+      },
       maxProfiles: 10,
     },
     overlay: null,
@@ -68,6 +84,18 @@ export function runtimeBootstrap() {
 
   function hasDurationMetrics(measurementMode) {
     return measurementMode === ACTUAL_DURATION || measurementMode === MIXED;
+  }
+
+  function getSelectedEngine(preferredEngine) {
+    return detectDevtoolsCapabilities(preferredEngine).selectedEngine;
+  }
+
+  function getSnapshotStore(engineName) {
+    return state.snapshotStores[engineName] || state.snapshotStores[ENGINE_CUSTOM];
+  }
+
+  function getProfilerStore(engineName) {
+    return state.profiler.profilesByEngine[engineName] || state.profiler.profilesByEngine[ENGINE_CUSTOM];
   }
 
   function getProfilerLimitations(measurementMode) {
@@ -211,17 +239,23 @@ export function runtimeBootstrap() {
 
   function buildEngineMetadata(preferredEngine) {
     const capabilities = detectDevtoolsCapabilities(preferredEngine);
+    return buildResolvedEngineMetadata(capabilities.enginePreference, capabilities.selectedEngine, capabilities);
+  }
+
+  function buildResolvedEngineMetadata(enginePreference, selectedEngine, capabilitiesInput) {
+    const capabilities = capabilitiesInput || detectDevtoolsCapabilities(enginePreference);
+    const resolvedEngine = selectedEngine || capabilities.selectedEngine;
     return {
-      enginePreference: capabilities.enginePreference,
-      engine: capabilities.selectedEngine,
-      selectedEngine: capabilities.selectedEngine,
+      enginePreference: normalizeEnginePreference(enginePreference),
+      engine: resolvedEngine,
+      selectedEngine: resolvedEngine,
       recommendedEngine: capabilities.recommendedEngine,
       availableEngines: capabilities.availableEngines,
-      engineFallback: capabilities.engineFallback,
+      engineFallback: normalizeEnginePreference(enginePreference) === ENGINE_DEVTOOLS && resolvedEngine !== ENGINE_DEVTOOLS,
       engineReasons: capabilities.engineReasons,
-      inspectionSource: capabilities.selectedEngine === ENGINE_DEVTOOLS ? "devtools-aligned-fiber" : "custom-fiber",
-      measurementSource: capabilities.selectedEngine === ENGINE_DEVTOOLS ? "devtools-aligned-profiler" : "custom-profiler",
-      snapshotModel: capabilities.selectedEngine === ENGINE_DEVTOOLS ? "snapshot-scoped-devtools-aligned" : "snapshot-scoped-custom",
+      inspectionSource: resolvedEngine === ENGINE_DEVTOOLS ? "devtools-aligned-fiber" : "custom-fiber",
+      measurementSource: resolvedEngine === ENGINE_DEVTOOLS ? "devtools-hook-profiler" : "custom-snapshot-profiler",
+      snapshotModel: resolvedEngine === ENGINE_DEVTOOLS ? "snapshot-scoped-devtools-aligned" : "snapshot-scoped-custom",
       devtoolsCapabilities: {
         hookPresent: capabilities.hookPresent,
         rendererCount: capabilities.rendererCount,
@@ -285,29 +319,33 @@ export function runtimeBootstrap() {
     return entry;
   }
 
-  function pruneSnapshots() {
-    while (state.snapshots.size > state.maxSnapshots) {
-      const oldestSnapshotId = state.snapshots.keys().next().value;
+  function pruneSnapshots(engineName) {
+    const store = getSnapshotStore(engineName);
+    while (store.snapshots.size > store.maxSnapshots) {
+      const oldestSnapshotId = store.snapshots.keys().next().value;
       if (!oldestSnapshotId) {
         break;
       }
 
-      state.snapshots.delete(oldestSnapshotId);
-      if (state.latestSnapshotId === oldestSnapshotId) {
-        state.latestSnapshotId = state.snapshots.size
-          ? Array.from(state.snapshots.keys()).pop()
+      store.snapshots.delete(oldestSnapshotId);
+      state.snapshotIndex.delete(oldestSnapshotId);
+      if (store.latestSnapshotId === oldestSnapshotId) {
+        store.latestSnapshotId = store.snapshots.size
+          ? Array.from(store.snapshots.keys()).pop()
           : null;
       }
     }
   }
 
-  function pruneProfiles() {
-    while (state.profiler.profiles.size > state.profiler.maxProfiles) {
-      const oldestProfileId = state.profiler.profiles.keys().next().value;
+  function pruneProfiles(engineName) {
+    const store = getProfilerStore(engineName);
+    while (store.size > state.profiler.maxProfiles) {
+      const oldestProfileId = store.keys().next().value;
       if (!oldestProfileId) {
         break;
       }
-      state.profiler.profiles.delete(oldestProfileId);
+      store.delete(oldestProfileId);
+      state.profiler.profileIndex.delete(oldestProfileId);
     }
   }
 
@@ -654,13 +692,14 @@ export function runtimeBootstrap() {
     };
   }
 
-  function traverseFiberTree(fiber, parentId, depth, rootId, output, nodeDetails, nodeMetrics, nodeMeta, parentAnalyzerKey, preferredEngine) {
+  function traverseFiberTree(fiber, parentId, depth, rootId, output, nodeDetails, nodeMetrics, nodeMeta, parentAnalyzerKey, preferredEngine, engineLabel) {
     let current = fiber;
     let siblingIndex = 0;
 
     while (current) {
       const node = buildNodeRecord(current, parentId, depth, rootId);
       const analyzerKey = [
+        engineLabel,
         rootId,
         parentAnalyzerKey || "root",
         node.displayName || "Anonymous",
@@ -677,7 +716,7 @@ export function runtimeBootstrap() {
       });
 
       if (current.child) {
-        traverseFiberTree(current.child, node.id, depth + 1, rootId, output, nodeDetails, nodeMetrics, nodeMeta, analyzerKey, preferredEngine);
+        traverseFiberTree(current.child, node.id, depth + 1, rootId, output, nodeDetails, nodeMetrics, nodeMeta, analyzerKey, preferredEngine, engineLabel);
       }
 
       current = current.sibling;
@@ -715,7 +754,7 @@ export function runtimeBootstrap() {
     }
   }
 
-  function collectLiveTree(preferredEngine) {
+  function collectFiberTree(preferredEngine, engineLabel) {
     const roots = [];
     const nodes = [];
     const nodeDetails = new Map();
@@ -735,7 +774,7 @@ export function runtimeBootstrap() {
         nodeId: getFiberId(current.child),
       });
 
-      traverseFiberTree(current.child, null, 0, entry.rootId, nodes, nodeDetails, nodeMetrics, nodeMeta, null, preferredEngine);
+      traverseFiberTree(current.child, null, 0, entry.rootId, nodes, nodeDetails, nodeMetrics, nodeMeta, null, preferredEngine, engineLabel);
     }
 
     finalizeNodeMetrics(nodes, nodeMetrics);
@@ -752,8 +791,25 @@ export function runtimeBootstrap() {
     };
   }
 
+  function collectCustomLiveTree(preferredEngine) {
+    return collectFiberTree(preferredEngine, ENGINE_CUSTOM);
+  }
+
+  function collectDevtoolsLiveTree(preferredEngine) {
+    return collectFiberTree(preferredEngine, ENGINE_DEVTOOLS);
+  }
+
+  function collectLiveTree(preferredEngine) {
+    const selectedEngine = getSelectedEngine(preferredEngine);
+    if (selectedEngine === ENGINE_DEVTOOLS) {
+      return collectDevtoolsLiveTree(preferredEngine);
+    }
+
+    return collectCustomLiveTree(preferredEngine);
+  }
+
   function serializeSnapshot(snapshot, preferredEngine) {
-    const engineMeta = buildEngineMetadata(preferredEngine);
+    const engineMeta = snapshot.engineMeta || buildEngineMetadata(preferredEngine);
     return {
       ...engineMeta,
       snapshotId: snapshot.snapshotId,
@@ -771,7 +827,9 @@ export function runtimeBootstrap() {
   }
 
   function cacheSnapshot(tree, preferredEngine) {
-    const snapshotId = "snapshot-" + state.nextSnapshotId++;
+    const selectedEngine = getSelectedEngine(preferredEngine);
+    const store = getSnapshotStore(selectedEngine);
+    const snapshotId = "snapshot-" + store.nextSnapshotId++;
     const snapshot = {
       snapshotId,
       generatedAt: tree.generatedAt,
@@ -801,11 +859,14 @@ export function runtimeBootstrap() {
         },
       ])),
       enginePreference: normalizeEnginePreference(preferredEngine),
+      selectedEngine,
+      engineMeta: buildResolvedEngineMetadata(preferredEngine, selectedEngine),
     };
 
-    state.snapshots.set(snapshot.snapshotId, snapshot);
-    state.latestSnapshotId = snapshot.snapshotId;
-    pruneSnapshots();
+    store.snapshots.set(snapshot.snapshotId, snapshot);
+    store.latestSnapshotId = snapshot.snapshotId;
+    state.snapshotIndex.set(snapshot.snapshotId, selectedEngine);
+    pruneSnapshots(selectedEngine);
     return snapshot;
   }
 
@@ -826,15 +887,19 @@ export function runtimeBootstrap() {
 
   function resolveSnapshot(snapshotId, createIfMissing = true, preferredEngine) {
     if (snapshotId) {
-      return state.snapshots.get(snapshotId) || createRuntimeError(
+      const indexedEngine = state.snapshotIndex.get(snapshotId);
+      const indexedStore = indexedEngine ? getSnapshotStore(indexedEngine) : null;
+      return indexedStore?.snapshots.get(snapshotId) || createRuntimeError(
         "snapshot-expired",
         "Snapshot \"" + snapshotId + "\" is no longer available. Run rdt tree get --session <name> again to collect a fresh snapshot.",
         { snapshotId },
       );
     }
 
-    if (state.latestSnapshotId) {
-      return state.snapshots.get(state.latestSnapshotId) || null;
+    const selectedEngine = getSelectedEngine(preferredEngine);
+    const store = getSnapshotStore(selectedEngine);
+    if (store.latestSnapshotId) {
+      return store.snapshots.get(store.latestSnapshotId) || null;
     }
 
     if (!createIfMissing) {
@@ -846,7 +911,9 @@ export function runtimeBootstrap() {
       return null;
     }
 
-    return state.snapshots.get(snapshot.snapshotId) || null;
+    const indexedEngine = state.snapshotIndex.get(snapshot.snapshotId);
+    const indexedStore = indexedEngine ? getSnapshotStore(indexedEngine) : null;
+    return indexedStore?.snapshots.get(snapshot.snapshotId) || null;
   }
 
   function getProfilerCommit(commitId) {
@@ -870,7 +937,10 @@ export function runtimeBootstrap() {
       }
 
       return {
-        ...buildEngineMetadata(preferredEngine || commit.enginePreference),
+        ...(commit.engineMeta || buildResolvedEngineMetadata(
+          preferredEngine || commit.enginePreference,
+          commit.selectedEngine || commit.engine,
+        )),
         ...details,
         commitId,
         profiler: commit.nodeAnalysisById[nodeId] || null,
@@ -907,7 +977,7 @@ export function runtimeBootstrap() {
     }).map((node) => ({
       ...node,
       snapshotId: snapshot.snapshotId,
-      engine: buildEngineMetadata(preferredEngine).selectedEngine,
+      engine: snapshot.selectedEngine || buildEngineMetadata(preferredEngine).selectedEngine,
     }));
   }
 
@@ -1012,7 +1082,7 @@ export function runtimeBootstrap() {
 
     const measurementMode = measurementModes.length === 1 ? measurementModes[0] : MIXED;
     const measuresComponentDuration = hasDurationMetrics(measurementMode);
-    const engineMeta = buildEngineMetadata(state.profiler.enginePreference);
+    const engineMeta = buildResolvedEngineMetadata(state.profiler.enginePreference, state.profiler.selectedEngine);
     return {
       ...engineMeta,
       observationLevel: OBSERVED,
@@ -1049,6 +1119,7 @@ export function runtimeBootstrap() {
     return {
       profileId: state.profiler.profileId,
       enginePreference: state.profiler.enginePreference,
+      selectedEngine: state.profiler.selectedEngine,
       summary: summarizeProfiler(),
       events: state.profiler.events.slice(),
     };
@@ -1059,8 +1130,11 @@ export function runtimeBootstrap() {
       return;
     }
 
-    state.profiler.profiles.set(record.profileId, record);
-    pruneProfiles();
+    const selectedEngine = record.selectedEngine || record.summary?.selectedEngine || ENGINE_CUSTOM;
+    const store = getProfilerStore(selectedEngine);
+    store.set(record.profileId, record);
+    state.profiler.profileIndex.set(record.profileId, selectedEngine);
+    pruneProfiles(selectedEngine);
   }
 
   function getStoredProfilerRecord(profileId) {
@@ -1068,7 +1142,12 @@ export function runtimeBootstrap() {
       return getCurrentProfilerRecord();
     }
 
-    return state.profiler.profiles.get(profileId) || null;
+    const indexedEngine = state.profiler.profileIndex.get(profileId);
+    if (!indexedEngine) {
+      return null;
+    }
+
+    return getProfilerStore(indexedEngine).get(profileId) || null;
   }
 
   function doctor(preferredEngine) {
@@ -1179,6 +1258,22 @@ export function runtimeBootstrap() {
     };
   }
 
+  function flattenReasons(observedReasons, inferredReasons) {
+    return [...(observedReasons || []), ...(inferredReasons || [])];
+  }
+
+  function getReasonConfidence(observedReasons, inferredReasons, matchingConfidence) {
+    if ((observedReasons || []).length > 0) {
+      return matchingConfidence === "high" ? "high" : "medium";
+    }
+
+    if ((inferredReasons || []).length > 0) {
+      return matchingConfidence === "high" ? "medium" : "low";
+    }
+
+    return "low";
+  }
+
   function buildCommitDiff(previousCommit, currentCommit) {
     const previousNodesByAnalyzer = new Map();
     if (previousCommit) {
@@ -1222,20 +1317,22 @@ export function runtimeBootstrap() {
     for (const [nodeId, currentEntry] of Object.entries(currentCommit.nodeMetaById)) {
       const previousEntry = previousNodesByAnalyzer.get(currentEntry.analyzerKey) || null;
       const currentDetails = currentCommit.nodeDetailsById[nodeId];
-      const reasons = [];
+      const observedReasons = [];
+      const inferredReasons = [];
       const changedPropKeys = [];
       const changedHookIndexes = [];
       const changedContextNames = [];
+      const matchingConfidence = previousEntry ? "high" : "medium";
 
       if (!previousEntry) {
-        reasons.push("mount");
+        observedReasons.push("mount");
         mountedNodeIds.push(nodeId);
         reasonCounts.mount += 1;
       } else {
         const previousDetails = previousEntry.details;
         const propDiffs = getTopLevelDiffKeys(previousDetails?.props, currentDetails?.props);
         if (propDiffs.length) {
-          reasons.push("props-changed");
+          observedReasons.push("props-changed");
           changedPropKeys.push(...propDiffs);
           reasonCounts["props-changed"] += 1;
           for (const key of propDiffs) {
@@ -1244,13 +1341,13 @@ export function runtimeBootstrap() {
         }
 
         if (stableStringify(previousDetails?.state) !== stableStringify(currentDetails?.state)) {
-          reasons.push("state-changed");
+          observedReasons.push("state-changed");
           reasonCounts["state-changed"] += 1;
         }
 
         const hookDiffs = getChangedHookIndexes(previousDetails?.hooks, currentDetails?.hooks);
         if (hookDiffs.length) {
-          reasons.push("hooks-changed");
+          observedReasons.push("hooks-changed");
           changedHookIndexes.push(...hookDiffs);
           reasonCounts["hooks-changed"] += 1;
           for (const index of hookDiffs) {
@@ -1260,7 +1357,7 @@ export function runtimeBootstrap() {
 
         const contextDiffs = getChangedContextNames(previousDetails?.context, currentDetails?.context);
         if (contextDiffs.length) {
-          reasons.push("context-changed");
+          observedReasons.push("context-changed");
           changedContextNames.push(...contextDiffs);
           reasonCounts["context-changed"] += 1;
           for (const name of contextDiffs) {
@@ -1269,7 +1366,8 @@ export function runtimeBootstrap() {
         }
       }
 
-      const changed = reasons.length > 0;
+      const rerenderReasons = flattenReasons(observedReasons, inferredReasons);
+      const changed = rerenderReasons.length > 0;
       if (changed) {
         changedNodeIds.push(nodeId);
       }
@@ -1278,11 +1376,14 @@ export function runtimeBootstrap() {
         commitId: currentCommit.commitId,
         nodeId,
         changed,
-        rerenderReasons: reasons,
+        rerenderReasons,
+        observedReasons,
+        inferredReasons,
+        reasonConfidence: getReasonConfidence(observedReasons, inferredReasons, matchingConfidence),
         changedPropKeys,
         changedHookIndexes,
         changedContextNames,
-        matchingConfidence: previousEntry ? "high" : "medium",
+        matchingConfidence,
       };
     }
 
@@ -1322,14 +1423,20 @@ export function runtimeBootstrap() {
 
     for (const node of currentCommit.treeSnapshot.nodes) {
       const analysis = analysisById[node.id];
-      if (!analysis || analysis.rerenderReasons.length > 0 || !node.parentId) {
+      if (!analysis || analysis.observedReasons.length > 0 || !node.parentId) {
         continue;
       }
 
       let ancestorId = node.parentId;
       while (ancestorId) {
         if (changedNodeSet.has(ancestorId)) {
-          analysis.rerenderReasons.push("parent-render");
+          analysis.inferredReasons.push("parent-render");
+          analysis.rerenderReasons = flattenReasons(analysis.observedReasons, analysis.inferredReasons);
+          analysis.reasonConfidence = getReasonConfidence(
+            analysis.observedReasons,
+            analysis.inferredReasons,
+            analysis.matchingConfidence,
+          );
           analysis.changed = true;
           changedNodeSet.add(node.id);
           changedNodeIds.push(node.id);
@@ -1390,10 +1497,13 @@ export function runtimeBootstrap() {
     const measurementMode = Array.from(liveTree.nodeMetrics.values()).some((metrics) => typeof metrics.actualDuration === "number")
       ? ACTUAL_DURATION
       : STRUCTURAL_ONLY;
+    const engineMeta = buildResolvedEngineMetadata(state.profiler.enginePreference, state.profiler.selectedEngine);
 
     return {
-      engine: buildEngineMetadata(state.profiler.enginePreference).selectedEngine,
+      engine: engineMeta.selectedEngine,
+      engineMeta,
       enginePreference: state.profiler.enginePreference,
+      selectedEngine: engineMeta.selectedEngine,
       eventType: COMMIT,
       commitId,
       timestamp: new Date().toISOString(),
@@ -1451,7 +1561,7 @@ export function runtimeBootstrap() {
   function listProfilerCommits() {
     return getCommitEvents()
       .map((commit) => ({
-        ...buildEngineMetadata(commit.enginePreference),
+        ...(commit.engineMeta || buildResolvedEngineMetadata(commit.enginePreference, commit.selectedEngine || commit.engine)),
         ...getCommitObservation(getCommitMeasurementMode(commit), COMMIT_LIST_WARNING, [
           SNAPSHOT_DIFF_LIMITATION,
         ]),
@@ -1478,21 +1588,25 @@ export function runtimeBootstrap() {
 
     const changedNodes = commit.changedNodeIds.map((nodeId) => {
       const node = commit.treeSnapshot.nodes.find((entry) => entry.id === nodeId);
+      const analysis = commit.nodeAnalysisById[nodeId] || {};
       return {
         id: nodeId,
         displayName: node?.displayName || null,
         depth: node?.depth ?? null,
-        reasons: commit.nodeAnalysisById[nodeId]?.rerenderReasons || [],
-        changedPropKeys: commit.nodeAnalysisById[nodeId]?.changedPropKeys || [],
-        changedHookIndexes: commit.nodeAnalysisById[nodeId]?.changedHookIndexes || [],
-        changedContextNames: commit.nodeAnalysisById[nodeId]?.changedContextNames || [],
+        reasons: analysis.rerenderReasons || [],
+        observedReasons: analysis.observedReasons || [],
+        inferredReasons: analysis.inferredReasons || [],
+        reasonConfidence: analysis.reasonConfidence || "low",
+        changedPropKeys: analysis.changedPropKeys || [],
+        changedHookIndexes: analysis.changedHookIndexes || [],
+        changedContextNames: analysis.changedContextNames || [],
         metrics: commit.nodeMetricsById[nodeId] || null,
         changedDescendantCount: commit.changedDescendantCounts[nodeId] || 0,
       };
     });
 
     return {
-      ...buildEngineMetadata(commit.enginePreference),
+      ...(commit.engineMeta || buildResolvedEngineMetadata(commit.enginePreference, commit.selectedEngine || commit.engine)),
       ...getCommitObservation(getCommitMeasurementMode(commit), COMMIT_DETAIL_WARNING, [
         COMMIT_DETAIL_WARNING,
         SNAPSHOT_DIFF_LIMITATION,
@@ -1610,6 +1724,9 @@ export function runtimeBootstrap() {
         totalTime: metrics.totalTime == null ? null : metrics.totalTime,
         changed: Boolean(analysis.changed),
         rerenderReasons: analysis.rerenderReasons || [],
+        observedReasons: analysis.observedReasons || [],
+        inferredReasons: analysis.inferredReasons || [],
+        reasonConfidence: analysis.reasonConfidence || "low",
         reasonSummary: getReasonSummary(analysis.rerenderReasons || []),
         changedDescendantCount: commit.changedDescendantCounts[node.id] || 0,
         matchingConfidence: analysis.matchingConfidence || "low",
@@ -1638,7 +1755,7 @@ export function runtimeBootstrap() {
       item.hotspotLabel = getHotspotLabel(item);
     }
     return {
-      ...buildEngineMetadata(commit.enginePreference),
+      ...(commit.engineMeta || buildResolvedEngineMetadata(commit.enginePreference, commit.selectedEngine || commit.engine)),
       ...getCommitObservation(measurementMode, COMMIT_RANKING_WARNING, [
         RANKING_FALLBACK_LIMITATION,
         SNAPSHOT_DIFF_LIMITATION,
@@ -1669,6 +1786,9 @@ export function runtimeBootstrap() {
       changed: Boolean(analysis.changed),
       changedDescendantCount: commit.changedDescendantCounts[nodeId] || 0,
       rerenderReasons: analysis.rerenderReasons || [],
+      observedReasons: analysis.observedReasons || [],
+      inferredReasons: analysis.inferredReasons || [],
+      reasonConfidence: analysis.reasonConfidence || "low",
       reasonSummary: getReasonSummary(analysis.rerenderReasons || []),
       hotspotLabel: getHotspotLabel({
         changed: Boolean(analysis.changed),
@@ -1702,7 +1822,7 @@ export function runtimeBootstrap() {
     }
 
     return {
-      ...buildEngineMetadata(commit.enginePreference),
+      ...(commit.engineMeta || buildResolvedEngineMetadata(commit.enginePreference, commit.selectedEngine || commit.engine)),
       ...getCommitObservation(getCommitMeasurementMode(commit), COMMIT_FLAMEGRAPH_WARNING, [
         FLAMEGRAPH_FALLBACK_LIMITATION,
         SNAPSHOT_DIFF_LIMITATION,
@@ -1785,6 +1905,7 @@ export function runtimeBootstrap() {
       state.profiler.active = true;
       state.profiler.profileId = profileId;
       state.profiler.enginePreference = normalizeEnginePreference(preferredEngine);
+      state.profiler.selectedEngine = getSelectedEngine(preferredEngine);
       state.profiler.startedAt = new Date().toISOString();
       state.profiler.stoppedAt = null;
       state.profiler.events = [];

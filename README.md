@@ -121,6 +121,7 @@ Engine selection:
 - `--engine devtools` requests the DevTools-aligned engine and falls back to `custom` when capability checks fail.
 - Inspect `selectedEngine`, `engineFallback`, and `devtoolsCapabilities` from `session doctor` before trusting profiler fidelity.
 - Do not use `_debugSource` availability as a reason to override `selectedEngine`; source mapping is tracked independently via `sourceCapability`.
+- Snapshot and profiler buffers are now isolated per selected engine, so `auto`, `custom`, and `devtools` no longer share the same in-memory lookup state.
 
 Performance triage flow:
 
@@ -207,6 +208,14 @@ Use `node pick` when the agent knows the visible element but not the component n
   - `rdt profiler compare --session <name> --left <profileId|file> --right <profileId|file>`
 - `node inspect --commit <commitId>` expects a node id from that commit's profiler views, not from a separate `tree get` snapshot.
 - `profiler compare` can compare in-memory profile ids from the current session or exported `.jsonl` / `.jsonl.gz` profiler files.
+- Commit-oriented profiler payloads now expose:
+  - `observedReasons`
+  - `inferredReasons`
+  - `reasonConfidence`
+- Read them literally:
+  - `observedReasons` are direct diffs from adjacent commit snapshots
+  - `inferredReasons` are propagation-based explanations such as `parent-render`
+  - `reasonConfidence` is a CLI confidence estimate, not React-internal truth
 - `profiler ranked` now includes `reasonSummary`, `hotspotLabel`, and compact hotspot summaries.
 - `profiler flamegraph` now includes `hottestSubtrees`, `widestChangedSubtrees`, and `mostCommonReasons` at the root level.
 

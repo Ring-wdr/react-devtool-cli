@@ -566,6 +566,8 @@ function compareProfiles(left, right) {
       sourceRef: right.sourceRef,
       summary: rightSummary,
     },
+    leftEngine: leftSummary.selectedEngine || leftSummary.engine || null,
+    rightEngine: rightSummary.selectedEngine || rightSummary.engine || null,
     commitCountDelta: rightSummary.commitCount - leftSummary.commitCount,
     maxNodeCountDelta: rightSummary.maxNodeCount - leftSummary.maxNodeCount,
     averageNodeCountDelta: rightSummary.averageNodeCount - leftSummary.averageNodeCount,

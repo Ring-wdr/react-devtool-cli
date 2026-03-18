@@ -196,7 +196,7 @@ Use `node pick` when the agent knows the visible element but not the component n
 
 ## Concept Alignment
 
-- Current runtime design note: [docs/devtools-concept-mapping.md](/Users/kimmanjoong/private-project/rdt-cli/docs/devtools-concept-mapping.md)
+- Current runtime design note: [docs/devtools-concept-mapping.md](./docs/devtools-concept-mapping.md)
 - `react-devtools-core` is the primary reference package for concept comparison.
 - `react-debug-tools` is installed as a dev-only reference but is currently a low-value implementation reference in this repo state.
 
@@ -206,9 +206,10 @@ Use `node pick` when the agent knows the visible element but not the component n
 - Compact human-readable output supports `--format yaml` and `--format pretty`
 - Raw profiler export is `NDJSON` (`.jsonl`) or `jsonl.gz` with `--compress`
 
-## Skill
+## Skills
 
-- Repository skill: [skills/react-devtool-cli/SKILL.md](/C:/Users/김만중/private/react-devtool-cli/skills/react-devtool-cli/SKILL.md)
+- Installed CLI user skill: [skills/react-devtool-cli/SKILL.md](./skills/react-devtool-cli/SKILL.md)
+- Repository maintenance skill: [skills/react-devtool-cli-repo/SKILL.md](./skills/react-devtool-cli-repo/SKILL.md)
 
 ## Notes
 

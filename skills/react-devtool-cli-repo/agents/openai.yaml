@@ -1,0 +1,4 @@
+interface:
+  display_name: "React Devtool CLI Repo"
+  short_description: "Maintain and validate the react-devtool-cli repository"
+  default_prompt: "Use $react-devtool-cli-repo to maintain, validate, or debug this repository."

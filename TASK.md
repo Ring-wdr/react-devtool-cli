@@ -76,7 +76,7 @@ node bin/rdt.js session close --session smoke-open-escalated
 - `node search App --session app` and `node inspect <id> --session app` returned meaningful `props`, `state`, `hooks`, and `dom` data.
 - profiler flow worked against real updates after adding an auto-incrementing `tick` state to `test-app/src/App.jsx`.
 - `profiler stop` reported `commitCount: 42`, `maxNodeCount: 64`, `roots: ["root-1"]`.
-- `profiler export --session app --compress` produced `/Users/kimmanjoong/private-project/rdt-cli/app-profile-mmt78xlw.jsonl.gz`.
+- `profiler export --session app --compress` produced a local `app-profile-mmt78xlw.jsonl.gz` artifact.
 - In this environment, both the Vite dev server port bind and `rdt` session commands that talk to the local session daemon required sandbox escalation.
 - `tree get` now returns a `snapshotId` for snapshot-local node lookup.
 - `node search App --session app --snapshot <snapshotId>` and `node inspect <nodeId> --session app --snapshot <snapshotId>` were verified against the same collected snapshot after later React updates.
@@ -192,7 +192,7 @@ Concrete tasks:
 
 ## Suggested Execution Order
 
-1. Re-read [TASK.md](./TASK.md), [README.md](./README.md), and [skills/react-devtool-cli/SKILL.md](./skills/react-devtool-cli/SKILL.md).
+1. Re-read [TASK.md](./TASK.md), [README.md](./README.md), and [skills/react-devtool-cli-repo/SKILL.md](./skills/react-devtool-cli-repo/SKILL.md).
 2. Run:
 
 ```bash

@@ -224,3 +224,7 @@ Use `node pick` when the agent knows the visible element but not the component n
 - Runtime semantics are documented to align with DevTools concepts where practical, while keeping the CLI snapshot model custom
 - `profiler export` intentionally rejects `YAML`; use `profiler summary` for compact summaries
 - Global CLI distribution is preferred; Playwright does not need to be pinned as a repo dependency
+
+## License
+
+MIT. See [LICENSE](./LICENSE).

@@ -2,6 +2,7 @@
   "name": "react-devtool-cli",
   "version": "0.1.31",
   "description": "Agent-first CLI for React component tree inspection, snapshot-aware node debugging, and profiler analysis through a Playwright-managed browser session.",
+  "license": "MIT",
   "type": "module",
   "homepage": "https://github.com/Ring-wdr/react-devtool-cli#readme",
   "repository": {

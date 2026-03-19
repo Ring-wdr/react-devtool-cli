@@ -32,6 +32,7 @@ Thanks for contributing to `react-devtool-cli`.
 - Add or update tests when behavior changes.
 - Preserve the CLI's bias toward deterministic, structured output.
 - Do not bundle unrelated refactors into the same PR.
+- Do not weaken branch protection, bypass required reviews, or disable required CI checks to land a change. If protection blocks a merge, satisfy the rule or ask the maintainer whether repository governance should change as a separate decision.
 
 ## Development
 

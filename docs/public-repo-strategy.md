@@ -51,3 +51,10 @@ This repository is run as a solo-maintainer open source project. The operating m
 - Discussions disabled unless issue volume justifies a separate support channel
 - Secret scanning enabled when available
 - Topic metadata kept current so the repo is discoverable without overselling scope
+
+## 8. Governance Guardrails
+
+- Branch protection is part of the maintenance policy, not a convenience setting.
+- Do not reduce required reviews, required checks, or code owner enforcement just to land an otherwise-ready PR.
+- Do not use admin overrides for normal day-to-day maintenance.
+- If a branch protection rule becomes counterproductive, change that governance intentionally in a separate maintainer decision, not as part of shipping an unrelated fix.

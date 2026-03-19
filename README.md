@@ -19,6 +19,26 @@ This follows the same overall shape as Playwright's own CLI surface: one command
 npm install -g react-devtool-cli
 ```
 
+If you use Codex and want the bundled skill that knows how to operate the installed CLI, copy `skills/react-devtool-cli` into `$CODEX_HOME/skills` (`~/.codex/skills` by default) and restart Codex.
+
+macOS/Linux:
+
+```bash
+git clone https://github.com/Ring-wdr/react-devtool-cli.git
+mkdir -p ~/.codex/skills
+cp -R react-devtool-cli/skills/react-devtool-cli ~/.codex/skills/react-devtool-cli
+```
+
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/Ring-wdr/react-devtool-cli.git
+New-Item -ItemType Directory -Force "$env:USERPROFILE/.codex/skills" | Out-Null
+Copy-Item -Recurse -Force ".\\react-devtool-cli\\skills\\react-devtool-cli" "$env:USERPROFILE/.codex/skills/react-devtool-cli"
+```
+
+If you are working on the repository itself rather than using the published CLI, install `skills/react-devtool-cli-repo` the same way.
+
 Published package notes:
 
 - npm consumers receive built files from `dist/`, not the repository source tree.
@@ -251,8 +271,12 @@ Use `node pick` when the agent knows the visible element but not the component n
 
 ## Skills
 
-- Installed CLI user skill: [skills/react-devtool-cli/SKILL.md](./skills/react-devtool-cli/SKILL.md)
+Bundled skill directories in this repository:
+
+- CLI user skill: [skills/react-devtool-cli/SKILL.md](./skills/react-devtool-cli/SKILL.md)
 - Repository maintenance skill: [skills/react-devtool-cli-repo/SKILL.md](./skills/react-devtool-cli-repo/SKILL.md)
+
+To use either skill in Codex, copy the skill directory into `$CODEX_HOME/skills` and restart Codex.
 
 ## Notes
 

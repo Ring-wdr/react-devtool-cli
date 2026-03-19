@@ -19,7 +19,13 @@ This follows the same overall shape as Playwright's own CLI surface: one command
 npm install -g react-devtool-cli
 ```
 
-If you use Codex and want the bundled skill that knows how to operate the installed CLI, copy `skills/react-devtool-cli` into `$CODEX_HOME/skills` (`~/.codex/skills` by default) and restart Codex.
+## Install the bundled agent skill
+
+If you want an AI coding agent to know how to operate the published `rdt` CLI, install the bundled `react-devtool-cli` skill with the method that matches your toolchain.
+
+### Codex
+
+Copy `skills/react-devtool-cli` into `$CODEX_HOME/skills` (`~/.codex/skills` by default), then restart Codex.
 
 macOS/Linux:
 
@@ -37,7 +43,45 @@ New-Item -ItemType Directory -Force "$env:USERPROFILE/.codex/skills" | Out-Null
 Copy-Item -Recurse -Force ".\\react-devtool-cli\\skills\\react-devtool-cli" "$env:USERPROFILE/.codex/skills/react-devtool-cli"
 ```
 
-If you are working on the repository itself rather than using the published CLI, install `skills/react-devtool-cli-repo` the same way.
+### Claude Code
+
+Claude Code discovers skills from `~/.claude/skills/<skill-name>/SKILL.md` for personal skills and `.claude/skills/<skill-name>/SKILL.md` for project-scoped skills. Copy this repository's bundled skill directory into one of those locations:
+
+```bash
+git clone https://github.com/Ring-wdr/react-devtool-cli.git
+mkdir -p ~/.claude/skills
+cp -R react-devtool-cli/skills/react-devtool-cli ~/.claude/skills/react-devtool-cli
+```
+
+For project-only usage, copy it to `.claude/skills/react-devtool-cli` inside your repo instead.
+
+### Gemini CLI
+
+Gemini CLI has built-in skill management. Install directly from this repo:
+
+```bash
+gemini skills install https://github.com/Ring-wdr/react-devtool-cli.git --path skills/react-devtool-cli
+```
+
+If you already cloned this repository locally, you can also link the whole skills folder and let Gemini discover it:
+
+```bash
+gemini skills link /path/to/react-devtool-cli/skills --scope workspace
+```
+
+Reload discovered skills with `/skills reload` if the current session is already open.
+
+### skills.sh
+
+If you want one installer path that configures the skill for a supported agent automatically, use `skills.sh`:
+
+```bash
+npx skills add https://github.com/Ring-wdr/react-devtool-cli --skill react-devtool-cli
+```
+
+This is the easiest cross-tool path when you are using ecosystems such as Claude Code, Gemini CLI, Codex, or Antigravity.
+
+If you are working on the repository itself rather than using the published CLI, install `skills/react-devtool-cli-repo` with the same tool-specific pattern.
 
 Published package notes:
 
@@ -276,7 +320,7 @@ Bundled skill directories in this repository:
 - CLI user skill: [skills/react-devtool-cli/SKILL.md](./skills/react-devtool-cli/SKILL.md)
 - Repository maintenance skill: [skills/react-devtool-cli-repo/SKILL.md](./skills/react-devtool-cli-repo/SKILL.md)
 
-To use either skill in Codex, copy the skill directory into `$CODEX_HOME/skills` and restart Codex.
+Use the installation routes above to place either skill into your agent's skill directory or installer flow.
 
 ## Notes
 

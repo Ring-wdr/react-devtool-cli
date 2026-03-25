@@ -1,0 +1,64 @@
+name: Publish
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish package to npm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify release tag matches package version
+        run: |
+          node --input-type=module -e "
+          import { readFileSync } from 'node:fs';
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+          const expected = 'v' + pkg.version;
+          const actual = process.env.RELEASE_TAG;
+          if (actual !== expected) {
+            console.error('Release tag mismatch:', { actual, expected });
+            process.exit(1);
+          }
+          "
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Select npm dist-tag
+        id: publish_meta
+        run: |
+          VERSION=$(node -p "JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version")
+          if [[ "$VERSION" == *-* ]]; then
+            echo "dist_tag=next" >> "$GITHUB_OUTPUT"
+            echo "publish_args=--provenance --tag next" >> "$GITHUB_OUTPUT"
+          else
+            echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
+            echo "publish_args=--provenance" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm
+        run: npm publish ${{ steps.publish_meta.outputs.publish_args }}

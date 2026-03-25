@@ -4,6 +4,8 @@ Agent-first CLI for inspecting React applications through a Playwright-managed b
 
 It gives agents and engineers a structured command surface for React tree snapshots, node inspection, source reveal, deterministic browser interaction, and commit-oriented profiler analysis without opening the DevTools UI. The public CLI is engine-based: `auto` chooses between the current custom engine and a DevTools-aligned engine when capability checks allow it.
 
+Project site: https://ring-wdr.github.io/react-devtool-cli/
+
 ## Recommended architecture
 
 - `rdt` talks to Playwright directly through the Node API

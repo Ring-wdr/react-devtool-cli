@@ -1,6 +1,6 @@
 {
   "name": "react-devtool-cli",
-  "version": "0.1.35-rc.0",
+  "version": "0.1.35-rc.1",
   "description": "Agent-first CLI for React component tree inspection, snapshot-aware node debugging, and profiler analysis through a Playwright-managed browser session.",
   "license": "MIT",
   "type": "module",

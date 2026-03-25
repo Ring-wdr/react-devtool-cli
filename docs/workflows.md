@@ -1,0 +1,104 @@
+# Workflows
+
+This page is the fastest path from zero context to a useful `rdt` session.
+
+## Install
+
+```bash
+npm install -g react-devtool-cli
+```
+
+`rdt` resolves Playwright from the local project first, then falls back through `playwright-core`, `RDT_PLAYWRIGHT_PATH`, and global installs.
+
+## Choose the right session mode
+
+| Command | Use when | Notes |
+| --- | --- | --- |
+| `rdt session open` | You want `rdt` to launch and own the browser locally | Recommended default path |
+| `rdt session connect` | You already have a Playwright `wsEndpoint` | Remote-friendly, keeps Playwright fidelity |
+| `rdt session attach` | You only have Chromium CDP access | Compatibility path, lower fidelity than Playwright protocol |
+
+## Quick start
+
+```bash
+rdt session open --url http://localhost:3000 --browser chromium --engine auto --session demo
+rdt tree get --session demo
+rdt node search App --session demo --snapshot <snapshotId>
+rdt node inspect <nodeId> --session demo --snapshot <snapshotId>
+```
+
+If you only remember one rule, remember this one: `tree get` starts the inspection cycle, and the returned `snapshotId` should follow later lookup commands.
+
+## Snapshot-aware inspection
+
+- `tree get` returns a `snapshotId`.
+- Node ids are only guaranteed to be meaningful inside that snapshot.
+- If you omit `--snapshot`, `rdt` falls back to the latest collected snapshot.
+- If a requested snapshot has been evicted from the in-memory cache, the command fails with `snapshot-expired`.
+
+Recommended flow:
+
+```bash
+rdt tree get --session demo
+rdt node search App --session demo --snapshot <snapshotId>
+rdt node highlight <nodeId> --session demo --snapshot <snapshotId>
+rdt source reveal <nodeId> --session demo --snapshot <snapshotId>
+```
+
+Recovery flow:
+
+```bash
+rdt tree get --session demo
+# save the new snapshotId
+rdt node search App --session demo --snapshot <newSnapshotId>
+```
+
+## Run `doctor` before deeper investigation
+
+```bash
+rdt session doctor --session demo
+```
+
+Use it to confirm:
+
+- React was detected
+- which engine was selected
+- whether built-in `interact` helpers are supported
+- whether profiler and source-reveal capabilities are trustworthy for the current runtime
+
+## Interact before profiling
+
+Built-in interactions keep the investigation inside the same session instead of forcing separate helper scripts.
+
+```bash
+rdt interact click --session demo --selector 'button.save'
+rdt interact type --session demo --selector 'input[name="query"]' --text hello
+rdt interact wait --session demo --ms 500
+```
+
+After interaction, verify the app settled by collecting a fresh tree or reading profiler output instead of assuming the UI state changed correctly.
+
+## Profile a real update
+
+```bash
+rdt profiler start --session demo
+rdt interact type --session demo --selector 'input[name="query"]' --text hello
+rdt profiler stop --session demo
+rdt profiler summary --session demo
+rdt profiler ranked <commitId> --session demo --limit 10
+rdt profiler export --session demo --compress
+```
+
+Read profiler output literally:
+
+- `commitCount` tells you how many commits were captured
+- `nodeCount` fields describe live tree size at commit time, not exact rerender counts
+- `primaryUpdateCommitId` and `recommendedCommitIds` are better drill-down targets than blindly reading the first commit
+
+## Close the loop cleanly
+
+```bash
+rdt session close --session demo
+```
+
+Treat sessions as explicit resources. Close them when the investigation is over so later runs start from a known state.

@@ -237,6 +237,15 @@ function normalizeClickNth(value) {
   });
 }
 
+function hasInteractTarget(payload, command) {
+  return Boolean(
+    payload.selector
+      || payload.role
+      || payload.targetText !== undefined
+      || (command === "click" && payload.text !== undefined),
+  );
+}
+
 function parseServerArgv(argv) {
   const options = {};
 
@@ -712,18 +721,28 @@ class SessionServer {
     };
   }
 
-  buildClickLocator(page, payload) {
+  buildInteractLocator(page, payload, command) {
     if (payload.selector) {
       return {
         locator: page.locator(String(payload.selector)),
         targetingStrategy: "selector",
+        targetingResolution: "css-selector",
       };
     }
 
-    if (payload.text !== undefined) {
+    if (command === "click" && payload.text !== undefined) {
       return {
         locator: page.getByText(String(payload.text)),
         targetingStrategy: "text",
+        targetingResolution: "visible-text",
+      };
+    }
+
+    if (command !== "click" && payload.targetText !== undefined) {
+      return {
+        locator: page.getByLabel(String(payload.targetText)),
+        targetingStrategy: "target-text",
+        targetingResolution: "label-control",
       };
     }
 
@@ -731,38 +750,53 @@ class SessionServer {
       return {
         locator: page.getByRole(String(payload.role)),
         targetingStrategy: "role",
+        targetingResolution: "aria-role",
       };
     }
 
-    throw new CliError("Missing interact click target.", {
-      code: "missing-click-target",
+    throw new CliError(`Missing interact ${command} target.`, {
+      code: `missing-${command}-target`,
     });
   }
 
-  async resolveClickTarget(page, payload, timeoutMs) {
-    const { locator, targetingStrategy } = this.buildClickLocator(page, payload);
+  async resolveInteractTarget(page, payload, timeoutMs, command, { allowUntargeted = false } = {}) {
+    if (!hasInteractTarget(payload, command)) {
+      if (allowUntargeted) {
+        return {
+          locator: null,
+          targetingStrategy: null,
+          targetingResolution: null,
+          matchCount: null,
+          resolvedNth: null,
+          strict: false,
+        };
+      }
+    }
+
+    const { locator, targetingStrategy, targetingResolution } = this.buildInteractLocator(page, payload, command);
     await locator.first().waitFor({ state: "attached", timeout: timeoutMs });
 
     const matchCount = await locator.count();
     const strict = Boolean(payload.strict);
     if (strict && matchCount !== 1) {
       throw new CliError(
-        `Strict interact click expected exactly one match for ${targetingStrategy}, but found ${matchCount}.`,
-        { code: "interact-click-strict-mismatch" },
+        `Strict interact ${command} expected exactly one match for ${targetingStrategy}, but found ${matchCount}.`,
+        { code: `interact-${command}-strict-mismatch` },
       );
     }
 
     const resolvedNth = strict ? 0 : normalizeClickNth(payload.nth);
     if (resolvedNth >= matchCount) {
       throw new CliError(
-        `Interact click match index ${resolvedNth} is out of range for ${targetingStrategy} with ${matchCount} matches.`,
-        { code: "interact-click-index-out-of-range" },
+        `Interact ${command} match index ${resolvedNth} is out of range for ${targetingStrategy} with ${matchCount} matches.`,
+        { code: `interact-${command}-index-out-of-range` },
       );
     }
 
     return {
       locator: locator.nth(resolvedNth),
       targetingStrategy,
+      targetingResolution,
       matchCount,
       resolvedNth,
       strict,
@@ -788,24 +822,23 @@ class SessionServer {
 
     const selector = payload.selector ? String(payload.selector) : null;
     const text = payload.text !== undefined ? String(payload.text) : null;
+    const targetText = payload.targetText !== undefined ? String(payload.targetText) : null;
     const role = payload.role ? String(payload.role) : null;
-    let locator = selector ? page.locator(selector).first() : null;
-    let targetingStrategy = selector ? "selector" : null;
-    let matchCount = locator ? 1 : null;
-    let resolvedNth = null;
-    let strict = false;
+    const resolvedTarget = await this.resolveInteractTarget(
+      page,
+      payload,
+      timeoutMs,
+      command,
+      { allowUntargeted: command === "press" },
+    );
+    let locator = resolvedTarget.locator;
+    let targetingStrategy = resolvedTarget.targetingStrategy;
+    let targetingResolution = resolvedTarget.targetingResolution;
+    let matchCount = resolvedTarget.matchCount;
+    let resolvedNth = resolvedTarget.resolvedNth;
+    let strict = resolvedTarget.strict;
 
-    if (command === "click") {
-      const clickTarget = await this.resolveClickTarget(page, payload, timeoutMs);
-      locator = clickTarget.locator;
-      targetingStrategy = clickTarget.targetingStrategy;
-      matchCount = clickTarget.matchCount;
-      resolvedNth = clickTarget.resolvedNth;
-      strict = clickTarget.strict;
-    } else if (locator) {
-      await locator.waitFor({ state: "attached", timeout: timeoutMs });
-    }
-
+    const targetedAction = Boolean(locator);
     const target = locator
       ? await locator.evaluate((element) => ({
           tagName: element.tagName.toLowerCase(),
@@ -850,10 +883,15 @@ class SessionServer {
     if (command === "click" && requestedDelivery === "dom" && !profilerActive) {
       runtimeWarnings.push("Click delivery was forced to DOM dispatch even though profiler fallback was not required.");
     }
+    if (command === "press" && !targetedAction) {
+      runtimeWarnings.push("Untargeted press dispatches to the active page keyboard focus; supply --selector, --target-text, or --role when element targeting matters.");
+    }
 
     const limitations = command === "click"
       ? ["interact click resolves a single locator match; without --strict, broader match sets may still require caller verification"]
-      : ["selector-based interaction targets the first matching element only"];
+      : targetedAction
+        ? ["interact type/press resolves a single locator match; without --strict, broader match sets may still require caller verification"]
+        : ["untargeted press uses the page keyboard directly and depends on the current browser focus state"];
 
     return {
       observationLevel: "observed",
@@ -867,11 +905,13 @@ class SessionServer {
       profilerActive,
       fallbackApplied,
       targetingStrategy,
+      targetingResolution,
       matchCount,
       resolvedNth,
       strict,
       selector,
       textQuery: text,
+      targetText,
       role,
       target,
       key: payload.key ? String(payload.key) : null,
@@ -952,8 +992,8 @@ class SessionServer {
       case "node.search":
         await this.ensureReactDetected();
         return unwrapRuntimeResult(await this.page.evaluate(
-          ({ query, snapshotId, preferredEngine, structured }) => {
-            return window.__RDT_CLI_RUNTIME__.searchNodes(query, snapshotId, preferredEngine, structured);
+          ({ query, snapshotId, preferredEngine, structured, limit }) => {
+            return window.__RDT_CLI_RUNTIME__.searchNodes(query, snapshotId, preferredEngine, structured, limit);
           },
           { ...payload, preferredEngine: this.enginePreference },
         ));

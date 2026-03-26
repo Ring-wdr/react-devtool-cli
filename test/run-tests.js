@@ -238,6 +238,22 @@ run("parseArgv preserves node search structured flag", () => {
   assert.equal(parsed.options.structured, true);
 });
 
+run("parseArgv preserves node search limit option", () => {
+  const parsed = parseArgv([
+    "node",
+    "search",
+    "ResultRow",
+    "--session",
+    "app",
+    "--structured",
+    "--limit",
+    "5",
+  ]);
+
+  assert.deepEqual(parsed.positionals, ["node", "search", "ResultRow"]);
+  assert.equal(parsed.options.limit, 5);
+});
+
 run("normalizeCliPositionals maps doctor alias to session doctor", () => {
   const parsed = parseArgv(["doctor", "--session", "app"]);
   const normalized = normalizeCliPositionals(parsed.positionals);
@@ -263,6 +279,44 @@ run("parseArgv preserves interact type options", () => {
 
   assert.deepEqual(parsed.positionals, ["interact", "type"]);
   assert.equal(parsed.options.text, "abc");
+});
+
+run("parseArgv preserves interact type target-text options", () => {
+  const parsed = parseArgv([
+    "interact",
+    "type",
+    "--session",
+    "app",
+    "--target-text",
+    "Filter inventory",
+    "--text",
+    "billing",
+    "--strict",
+  ]);
+
+  assert.deepEqual(parsed.positionals, ["interact", "type"]);
+  assert.equal(parsed.options.targetText, "Filter inventory");
+  assert.equal(parsed.options.text, "billing");
+  assert.equal(parsed.options.strict, true);
+});
+
+run("parseArgv preserves interact press role options", () => {
+  const parsed = parseArgv([
+    "interact",
+    "press",
+    "--session",
+    "app",
+    "--key",
+    "Enter",
+    "--role",
+    "textbox",
+    "--strict",
+  ]);
+
+  assert.deepEqual(parsed.positionals, ["interact", "press"]);
+  assert.equal(parsed.options.key, "Enter");
+  assert.equal(parsed.options.role, "textbox");
+  assert.equal(parsed.options.strict, true);
 });
 
 run("parseArgv preserves profiler compare options", () => {

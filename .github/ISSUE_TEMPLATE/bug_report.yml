@@ -13,7 +13,7 @@ body:
     attributes:
       label: react-devtool-cli version
       description: Output of `rdt --version`
-      placeholder: 0.1.34
+      placeholder: 0.2.0
     validations:
       required: true
   - type: textarea

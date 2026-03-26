@@ -46,6 +46,7 @@ It is a maintenance aid for agents and contributors. It is not a commitment to r
 | `profiler compare` | `src/cli.js` | No direct public equivalent | CLI-side comparison of stored profiler artifacts or exported NDJSON files. |
 | `interact click|type|press|wait` | `src/server.js` | No direct public equivalent | Playwright-backed deterministic interaction helpers for agent workflows. |
 | `interact click --delivery` | `src/server.js` | No direct public equivalent | CLI-specific interaction contract for choosing Playwright pointer input vs DOM dispatch. |
+| `interact click --selector|--text|--role` | `src/server.js` | No direct public equivalent | Locator targeting helpers that resolve a single actionable match for CLI workflows. |
 | `session doctor` | `src/server.js` + `src/runtime-script.js` | No direct public equivalent | CLI-specific preflight that reports trust boundaries, runtime readiness, Playwright resolution diagnostics, and helper import targets. |
 
 ## Intentional Divergences

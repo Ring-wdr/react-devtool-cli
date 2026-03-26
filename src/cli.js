@@ -92,6 +92,10 @@ function collectSnapshotPayload(options) {
   return options.snapshot ? { snapshotId: String(options.snapshot) } : {};
 }
 
+function normalizeStructuredFlag(options) {
+  return Boolean(options.structured);
+}
+
 function resolveCommitId(positionals, options, message) {
   const commitId = positionals[0] ? String(positionals[0]) : (options.commit ? String(options.commit) : null);
   ensure(commitId, message, { code: "missing-commit-id" });
@@ -278,9 +282,14 @@ async function handleSessionCommand(command, options) {
 }
 
 async function handleTreeCommand(command, options) {
-  ensure(command === "get", "Only `rdt tree get` is supported.", { code: "unsupported-command" });
+  ensure(command === "get" || command === "stats", "Only `rdt tree get` and `rdt tree stats` are supported.", {
+    code: "unsupported-command",
+  });
   ensure(options.session, "Missing required option --session", { code: "missing-session" });
-  const response = await requestSession(options.session, "tree.get");
+  const action = command === "stats" ? "tree.stats" : "tree.get";
+  const response = await requestSession(options.session, action, {
+    top: options.top ? Number(options.top) : undefined,
+  });
   writeStdout(response.result, resolveFormat(options));
 }
 
@@ -304,6 +313,7 @@ async function handleNodeCommand(command, positionals, options) {
     ensure(query, "Missing query for `rdt node search`.", { code: "missing-query" });
     const response = await requestSession(options.session, "node.search", {
       query,
+      structured: normalizeStructuredFlag(options),
       ...collectSnapshotPayload(options),
     });
     writeStdout(response.result, resolveFormat(options));
@@ -339,6 +349,7 @@ async function handleInteractCommand(command, options) {
     ensure(options.selector, "Missing required option --selector for `rdt interact click`.", { code: "missing-selector" });
     const response = await requestSession(options.session, "interact.click", {
       selector: String(options.selector),
+      delivery: options.delivery ? String(options.delivery) : undefined,
       timeoutMs: options.timeoutMs ?? undefined,
     });
     writeStdout(response.result, resolveFormat(options));
@@ -732,9 +743,28 @@ async function handleSourceCommand(command, positionals, options) {
   ensure(nodeId, "Missing node id for `rdt source reveal`.", { code: "missing-node-id" });
   const response = await requestSession(options.session, "source.reveal", {
     nodeId,
+    structured: normalizeStructuredFlag(options),
     ...collectSnapshotPayload(options),
   });
   writeStdout(response.result, resolveFormat(options));
+}
+
+export function normalizeCliPositionals(positionals) {
+  const [resource, command, ...rest] = positionals;
+
+  if (resource === "doctor") {
+    return {
+      resource: "session",
+      command: "doctor",
+      rest: command ? [command, ...rest] : [],
+    };
+  }
+
+  return {
+    resource,
+    command,
+    rest,
+  };
 }
 
 function printHelp() {
@@ -746,9 +776,10 @@ Recommended flow:
   3. Use rdt session attach only for Chromium CDP compatibility
   4. Use rdt tree/node/profiler commands for structured output
   5. For agent workflows, capture snapshotId from tree get and pass it to later node/source commands
-  6. Use rdt doctor before profiling if helper scripts or Playwright resolution look suspicious
+  6. Use rdt doctor (alias: rdt session doctor) before profiling if helper scripts or Playwright resolution look suspicious
 
 Usage:
+  rdt doctor --session <name> [--format json|yaml|pretty]
   rdt session open --url <url> [--browser chromium|firefox|webkit] [--engine auto|custom|devtools] [--channel <name>] [--device <name>] [--storage-state <path>] [--user-data-dir <path>] [--timeout <ms>] [--headless=false] [--session <name>]
   rdt session connect --ws-endpoint <url> [--browser chromium|firefox|webkit] [--engine auto|custom|devtools] [--target-url <substring>] [--timeout <ms>] [--session <name>]
   rdt session attach --cdp-url <url> [--engine auto|custom|devtools] [--target-url <substring>] [--timeout <ms>] [--session <name>]
@@ -756,11 +787,12 @@ Usage:
   rdt session doctor --session <name> [--format json|yaml|pretty]
   rdt session close --session <name>
   rdt tree get --session <name> [--format json|yaml|pretty]
+  rdt tree stats --session <name> [--top <n>] [--format json|yaml|pretty]
   rdt node inspect <id> --session <name> [--snapshot <id>] [--commit <id>]
-  rdt node search <query> --session <name> [--snapshot <id>]
+  rdt node search <query> --session <name> [--snapshot <id>] [--structured]
   rdt node highlight <id> --session <name> [--snapshot <id>]
   rdt node pick --session <name> [--timeout-ms 30000]
-  rdt interact click --session <name> --selector <css> [--timeout-ms <ms>]
+  rdt interact click --session <name> --selector <css> [--delivery auto|playwright|dom] [--timeout-ms <ms>]
   rdt interact type --session <name> --selector <css> --text <value> [--timeout-ms <ms>]
   rdt interact press --session <name> --key <name> [--selector <css>] [--timeout-ms <ms>]
   rdt interact wait --session <name> --ms <n>
@@ -773,7 +805,7 @@ Usage:
   rdt profiler flamegraph <id> --session <name> [--format json|pretty]
   rdt profiler compare --session <name> --left <profileId|file> --right <profileId|file> [--format json|yaml|pretty]
   rdt profiler export --session <name> [--output file.jsonl] [--compress]
-  rdt source reveal <id> --session <name> [--snapshot <id>]
+  rdt source reveal <id> --session <name> [--snapshot <id>] [--structured]
 
 Snapshot behavior:
   - tree get returns snapshotId
@@ -795,7 +827,7 @@ export async function runCli(argv) {
     return;
   }
 
-  const [resource, command, ...rest] = positionals;
+  const { resource, command, rest } = normalizeCliPositionals(positionals);
 
   try {
     switch (resource) {

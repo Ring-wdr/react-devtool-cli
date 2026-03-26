@@ -6,7 +6,13 @@ import path from "node:path";
 import { gzipSync } from "node:zlib";
 
 import { parseArgv } from "../src/args.js";
-import { closeSessionWithFallback, compareProfiles, forceKillProcessTree, parseProfilerExportFile } from "../src/cli.js";
+import {
+  closeSessionWithFallback,
+  compareProfiles,
+  forceKillProcessTree,
+  normalizeCliPositionals,
+  parseProfilerExportFile,
+} from "../src/cli.js";
 import { formatOutput } from "../src/format.js";
 import { requestSession } from "../src/http-client.js";
 import {
@@ -130,6 +136,8 @@ run("parseArgv preserves interact click options", () => {
     "app",
     "--selector",
     ".result-row",
+    "--delivery",
+    "dom",
     "--timeout-ms",
     "1200",
   ]);
@@ -137,7 +145,69 @@ run("parseArgv preserves interact click options", () => {
   assert.deepEqual(parsed.positionals, ["interact", "click"]);
   assert.equal(parsed.options.session, "app");
   assert.equal(parsed.options.selector, ".result-row");
+  assert.equal(parsed.options.delivery, "dom");
   assert.equal(parsed.options.timeoutMs, 1200);
+});
+
+run("parseArgv preserves tree stats options", () => {
+  const parsed = parseArgv([
+    "tree",
+    "stats",
+    "--session",
+    "app",
+    "--top",
+    "5",
+    "--format",
+    "pretty",
+  ]);
+
+  assert.deepEqual(parsed.positionals, ["tree", "stats"]);
+  assert.equal(parsed.options.session, "app");
+  assert.equal(parsed.options.top, 5);
+  assert.equal(parsed.options.format, "pretty");
+});
+
+run("parseArgv preserves source reveal structured flag", () => {
+  const parsed = parseArgv([
+    "source",
+    "reveal",
+    "n12",
+    "--session",
+    "app",
+    "--snapshot",
+    "snapshot-3",
+    "--structured",
+  ]);
+
+  assert.deepEqual(parsed.positionals, ["source", "reveal", "n12"]);
+  assert.equal(parsed.options.structured, true);
+  assert.equal(parsed.options.snapshot, "snapshot-3");
+});
+
+run("parseArgv preserves node search structured flag", () => {
+  const parsed = parseArgv([
+    "node",
+    "search",
+    "AlertPanel",
+    "--session",
+    "app",
+    "--structured",
+  ]);
+
+  assert.deepEqual(parsed.positionals, ["node", "search", "AlertPanel"]);
+  assert.equal(parsed.options.session, "app");
+  assert.equal(parsed.options.structured, true);
+});
+
+run("normalizeCliPositionals maps doctor alias to session doctor", () => {
+  const parsed = parseArgv(["doctor", "--session", "app"]);
+  const normalized = normalizeCliPositionals(parsed.positionals);
+
+  assert.deepEqual(normalized, {
+    resource: "session",
+    command: "doctor",
+    rest: [],
+  });
 });
 
 run("parseArgv preserves interact type options", () => {

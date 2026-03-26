@@ -194,6 +194,10 @@ export function runtimeBootstrap() {
     };
   }
 
+  function isHostLikeTagName(tagName) {
+    return typeof tagName === "string" && tagName.startsWith("Host");
+  }
+
   function detectDevtoolsCapabilities(preferredEngine) {
     const hook = window.__REACT_DEVTOOLS_GLOBAL_HOOK__ || null;
     const rendererCount = state.renderers.size;
@@ -827,6 +831,109 @@ export function runtimeBootstrap() {
     };
   }
 
+  function clampTopLimit(value, fallback = 10) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return fallback;
+    }
+
+    return Math.max(1, Math.floor(numeric));
+  }
+
+  function summarizeRoot(root, nodesById) {
+    const node = nodesById.get(root.nodeId) || null;
+    return {
+      rootId: root.id,
+      rendererId: root.rendererId,
+      nodeId: root.nodeId,
+      displayName: node?.displayName || null,
+      tagName: node?.tagName || null,
+    };
+  }
+
+  function collectTopLevelComponents(snapshot, limit) {
+    const nodes = snapshot.nodes || [];
+    const seen = new Set();
+    const components = [];
+
+    for (const root of snapshot.roots || []) {
+      let candidates = nodes.filter((node) => {
+        return node.rootId === root.id && node.depth === 1 && !isHostLikeTagName(node.tagName);
+      });
+
+      if (candidates.length === 0) {
+        const fallbackDepth = nodes
+          .filter((node) => node.rootId === root.id && !isHostLikeTagName(node.tagName))
+          .reduce((minimum, node) => Math.min(minimum, node.depth), Number.POSITIVE_INFINITY);
+
+        if (Number.isFinite(fallbackDepth)) {
+          candidates = nodes.filter((node) => {
+            return node.rootId === root.id && node.depth === fallbackDepth && !isHostLikeTagName(node.tagName);
+          });
+        }
+      }
+
+      for (const candidate of candidates) {
+        const dedupeKey = `${candidate.rootId}:${candidate.displayName}:${candidate.tagName}:${candidate.depth}`;
+        if (seen.has(dedupeKey)) {
+          continue;
+        }
+
+        seen.add(dedupeKey);
+        components.push({
+          rootId: candidate.rootId,
+          nodeId: candidate.id,
+          displayName: candidate.displayName,
+          tagName: candidate.tagName,
+          depth: candidate.depth,
+        });
+
+        if (components.length >= limit) {
+          return components;
+        }
+      }
+    }
+
+    return components;
+  }
+
+  function treeStats(top, preferredEngine) {
+    const observedTree = collectTree(preferredEngine);
+    const nodes = observedTree.nodes || [];
+    const nodesById = new Map(nodes.map((node) => [node.id, node]));
+    const topLimit = clampTopLimit(top, 10);
+    const topLevelComponents = observedTree.snapshotId
+      ? collectTopLevelComponents(observedTree, topLimit)
+      : [];
+
+    return {
+      enginePreference: observedTree.enginePreference,
+      engine: observedTree.engine,
+      selectedEngine: observedTree.selectedEngine,
+      recommendedEngine: observedTree.recommendedEngine,
+      availableEngines: observedTree.availableEngines,
+      engineFallback: observedTree.engineFallback,
+      engineReasons: observedTree.engineReasons,
+      inspectionSource: observedTree.inspectionSource,
+      measurementSource: observedTree.measurementSource,
+      snapshotModel: observedTree.snapshotModel,
+      devtoolsCapabilities: observedTree.devtoolsCapabilities,
+      snapshotId: observedTree.snapshotId || null,
+      snapshotScoped: true,
+      identityStableAcrossCommits: false,
+      observationLevel: OBSERVED,
+      limitations: getSnapshotLimitations(),
+      runtimeWarnings: observedTree.runtimeWarnings || [],
+      generatedAt: observedTree.generatedAt || null,
+      reactDetected: observedTree.reactDetected,
+      rootCount: (observedTree.roots || []).length,
+      nodeCount: nodes.length,
+      rootSummaries: (observedTree.roots || []).map((root) => summarizeRoot(root, nodesById)),
+      topLevelComponents,
+      topLevelComponentCount: topLevelComponents.length,
+    };
+  }
+
   function cacheSnapshot(tree, preferredEngine) {
     const selectedEngine = getSelectedEngine(preferredEngine);
     const store = getSnapshotStore(selectedEngine);
@@ -962,24 +1069,86 @@ export function runtimeBootstrap() {
     return details;
   }
 
-  function searchNodes(query, snapshotId, preferredEngine) {
+  function searchNodes(query, snapshotId, preferredEngine, structured) {
     const snapshot = resolveSnapshot(snapshotId, true, preferredEngine);
     if (snapshot?.__rdtError) {
       return snapshot;
     }
 
     if (!snapshot) {
-      return [];
+      return structured
+        ? {
+            items: [],
+            query: String(query || ""),
+            snapshotId: null,
+            matchCount: 0,
+            runtimeWarnings: [],
+          }
+        : [];
     }
 
     const lower = String(query || "").toLowerCase();
-    return snapshot.nodes.filter((node) => {
+    const items = snapshot.nodes.filter((node) => {
       return String(node.displayName || "").toLowerCase().includes(lower);
     }).map((node) => ({
       ...node,
       snapshotId: snapshot.snapshotId,
       engine: snapshot.selectedEngine || buildEngineMetadata(preferredEngine).selectedEngine,
     }));
+
+    if (!structured) {
+      return items;
+    }
+
+    const runtimeWarnings = items.length === 0
+      ? [
+          `No matches were found in snapshot "${snapshot.snapshotId}". The component may exist in the app but not be rendered in the current UI state.`,
+          "Do not treat a zero-match snapshot search as proof that the component is absent from the codebase.",
+        ]
+      : [];
+
+    return {
+      items,
+      query: String(query || ""),
+      snapshotId: snapshot.snapshotId,
+      matchCount: items.length,
+      runtimeWarnings,
+    };
+  }
+
+  function revealSource(nodeId, snapshotId, commitId, preferredEngine, structured) {
+    const details = inspectNode(nodeId, snapshotId, commitId, preferredEngine);
+    if (details?.__rdtError) {
+      return details;
+    }
+
+    if (!details) {
+      return createRuntimeError(
+        "node-not-found",
+        `Node "${nodeId}" is not available in the current snapshot or commit context.`,
+        {
+          nodeId,
+          snapshotId: snapshotId || null,
+          commitId: commitId || null,
+        },
+      );
+    }
+
+    if (!structured) {
+      return details.source;
+    }
+
+    const sourceCapability = getSourceCapability(details);
+    return {
+      status: details.source ? "available" : "unavailable",
+      available: Boolean(details.source),
+      mode: sourceCapability.mode,
+      reason: sourceCapability.reason,
+      rendererVersions: sourceCapability.rendererVersions,
+      snapshotId: details.snapshotId || snapshotId || null,
+      nodeId,
+      source: details.source || null,
+    };
   }
 
   function ensureOverlay() {
@@ -2004,6 +2173,8 @@ export function runtimeBootstrap() {
     profilerRanked: rankProfilerCommit,
     profilerFlamegraph: flamegraphProfilerCommit,
     profilerSummary: summarizeProfiler,
+    treeStats,
+    revealSource,
     doctor,
   };
 }

@@ -109,13 +109,15 @@ Published package notes:
 ## Commands
 
 ```bash
+rdt doctor --session demo
 rdt session open --url http://localhost:3000 --browser chromium --engine auto --session demo
 rdt session connect --ws-endpoint ws://127.0.0.1:3000/ --target-url localhost:3000 --session remote
 rdt session attach --cdp-url http://127.0.0.1:9222 --target-url localhost:3000 --session cdp
 rdt session doctor --session demo
 rdt tree get --session demo
+rdt tree stats --session demo --top 5
 rdt interact type --session demo --selector 'input[name="query"]' --text hello
-rdt node search App --session demo --snapshot <snapshotId>
+rdt node search App --session demo --snapshot <snapshotId> --structured
 rdt node inspect <nodeId> --session demo --snapshot <snapshotId>
 rdt profiler start --session demo
 rdt profiler stop --session demo
@@ -126,6 +128,7 @@ rdt profiler export --session demo --compress
 ## Snapshot Semantics
 
 - `tree get` returns a `snapshotId`.
+- `tree stats` returns the same `snapshotId` plus summary fields such as `rootCount`, `nodeCount`, `rootSummaries`, and `topLevelComponents`.
 - Node IDs are only meaningful within that snapshot.
 - The runtime currently keeps up to `5` snapshots in memory per session.
 - Agent-friendly recommended flow:
@@ -139,6 +142,7 @@ rdt profiler export --session demo --compress
 ## Doctor
 
 - `rdt session doctor --session <name>` reports runtime readiness and trust boundaries before a deeper investigation.
+- `rdt doctor --session <name>` is a first-class alias for the same command.
 - It also reports `enginePreference`, `selectedEngine`, `recommendedEngine`, `availableEngines`, and DevTools capability hints so agents know whether they are on a custom fallback or a DevTools-aligned path.
 - `sourceCapability` is reported separately from engine selection.
 - `_debugSource` is treated as an optional legacy source-mapping capability, not an engine-selection gate.
@@ -154,12 +158,15 @@ rdt profiler export --session demo --compress
 
 - Use built-in `interact` commands before reaching for external Playwright helper scripts.
 - Current supported actions:
-  - `rdt interact click --session <name> --selector <css>`
+  - `rdt interact click --session <name> --selector <css> [--delivery auto|playwright|dom]`
   - `rdt interact type --session <name> --selector <css> --text <value>`
   - `rdt interact press --session <name> --key <name> [--selector <css>]`
   - `rdt interact wait --session <name> --ms <n>`
 - These commands execute through the same Playwright session that owns the current `rdt` browser page.
 - They target the first matching selector only and return structured action metadata plus trust-boundary fields.
+- `interact click` defaults to `--delivery auto`.
+- In `auto`, profiler-active clicks fall back to DOM dispatch and report `requestedDelivery`, `effectiveDelivery`, `profilerActive`, and `fallbackApplied`.
+- Use `--delivery playwright` to force Playwright pointer input, or `--delivery dom` to force DOM dispatch.
 - `click`, `type`, and `press` confirm that the action was dispatched. They do not guarantee that the page or React tree has fully settled afterward.
 - When profiling or triggering large rerenders, follow `interact` with an explicit verification step such as `interact wait`, `tree get`, `node inspect`, or a profiler read command.
 
@@ -168,10 +175,10 @@ Example deterministic flow:
 ```bash
 rdt tree get --session demo
 # => save snapshotId from output
-rdt node search App --session demo --snapshot <snapshotId>
+rdt node search App --session demo --snapshot <snapshotId> --structured
 rdt node inspect <nodeId> --session demo --snapshot <snapshotId>
 rdt node highlight <nodeId> --session demo --snapshot <snapshotId>
-rdt source reveal <nodeId> --session demo --snapshot <snapshotId>
+rdt source reveal <nodeId> --session demo --snapshot <snapshotId> --structured
 ```
 
 Snapshot recovery:
@@ -269,7 +276,11 @@ Use `node pick` when the agent knows the visible element but not the component n
 - `hooks` is a simplified serialized view of hook state from the inspected fiber.
 - `context` is a serialized view of current context dependencies for the inspected node.
 - `source` projects `_debugSource` when available; `null` is expected in many dev builds.
+- `source reveal --structured` returns `status`, `available`, `mode`, `reason`, and `source` so automation can distinguish unavailable source data from a successful source payload.
+- `source reveal` without `--structured` preserves the raw legacy behavior and may return literal `null`.
 - `dom` is the first host element summary used for CLI highlight and DOM-oriented inspection.
+- `node search --structured` wraps search results in `{ items, query, snapshotId, matchCount, runtimeWarnings }`.
+- When `node search --structured` returns `matchCount: 0`, `runtimeWarnings` explains that the component may be absent from the current snapshot rather than absent from the codebase.
 - Profiler summary fields are commit-oriented CLI metrics, not the full DevTools profiler session schema.
 - `profiler summary` and exported summaries explicitly report:
   - `measurementMode: "actual-duration" | "structural-only" | "mixed"`

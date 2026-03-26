@@ -23,7 +23,8 @@ npm install -g react-devtool-cli
 ```bash
 rdt session open --url http://localhost:3000 --browser chromium --engine auto --session demo
 rdt tree get --session demo
-rdt node search App --session demo --snapshot <snapshotId>
+rdt tree stats --session demo --top 5
+rdt node search App --session demo --snapshot <snapshotId> --structured
 rdt node inspect <nodeId> --session demo --snapshot <snapshotId>
 ```
 
@@ -40,10 +41,15 @@ Recommended flow:
 
 ```bash
 rdt tree get --session demo
-rdt node search App --session demo --snapshot <snapshotId>
+rdt tree stats --session demo --top 5
+rdt node search App --session demo --snapshot <snapshotId> --structured
 rdt node highlight <nodeId> --session demo --snapshot <snapshotId>
-rdt source reveal <nodeId> --session demo --snapshot <snapshotId>
+rdt source reveal <nodeId> --session demo --snapshot <snapshotId> --structured
 ```
+
+- `tree stats` is the lightweight summary path when `tree get --format json` is too heavy.
+- `node search --structured` keeps the default array-returning behavior opt-in while adding `matchCount` and `runtimeWarnings`.
+- `source reveal --structured` returns availability metadata instead of only raw `null`.
 
 Recovery flow:
 
@@ -56,6 +62,7 @@ rdt node search App --session demo --snapshot <newSnapshotId>
 ## Run `doctor` before deeper investigation
 
 ```bash
+rdt doctor --session demo
 rdt session doctor --session demo
 ```
 
@@ -71,10 +78,13 @@ Use it to confirm:
 Built-in interactions keep the investigation inside the same session instead of forcing separate helper scripts.
 
 ```bash
-rdt interact click --session demo --selector 'button.save'
+rdt interact click --session demo --selector 'button.save' --delivery auto
 rdt interact type --session demo --selector 'input[name="query"]' --text hello
 rdt interact wait --session demo --ms 500
 ```
+
+- `interact click --delivery auto` uses Playwright pointer input by default.
+- When the profiler is active, `auto` may fall back to DOM dispatch and reports the applied delivery in the response payload.
 
 After interaction, verify the app settled by collecting a fresh tree or reading profiler output instead of assuming the UI state changed correctly.
 

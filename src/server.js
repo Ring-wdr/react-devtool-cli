@@ -207,6 +207,21 @@ function unwrapRuntimeResult(result) {
   return result;
 }
 
+function normalizeClickDeliveryMode(value) {
+  if (value == null) {
+    return "auto";
+  }
+
+  const normalized = String(value);
+  if (normalized === "auto" || normalized === "playwright" || normalized === "dom") {
+    return normalized;
+  }
+
+  throw new CliError(`Unsupported interact click delivery mode: ${normalized}`, {
+    code: "unsupported-delivery-mode",
+  });
+}
+
 function parseServerArgv(argv) {
   const options = {};
 
@@ -615,12 +630,7 @@ class SessionServer {
     }
   }
 
-  async clickLocator(locator, timeoutMs) {
-    if (!await this.isProfilerActive()) {
-      await locator.click({ timeout: timeoutMs, noWaitAfter: true });
-      return "playwright";
-    }
-
+  async clickLocatorDom(locator, timeoutMs) {
     await locator.waitFor({ state: "visible", timeout: timeoutMs });
     await locator.scrollIntoViewIfNeeded({ timeout: timeoutMs });
     const clicked = await locator.evaluate((element) => {
@@ -649,6 +659,42 @@ class SessionServer {
     }
 
     return "dom-click";
+  }
+
+  async clickLocator(locator, timeoutMs, requestedDelivery) {
+    const profilerActive = await this.isProfilerActive();
+
+    if (requestedDelivery === "playwright") {
+      await locator.click({ timeout: timeoutMs, noWaitAfter: true });
+      return {
+        effectiveDelivery: "playwright",
+        profilerActive,
+        fallbackApplied: false,
+      };
+    }
+
+    if (requestedDelivery === "dom") {
+      return {
+        effectiveDelivery: await this.clickLocatorDom(locator, timeoutMs),
+        profilerActive,
+        fallbackApplied: false,
+      };
+    }
+
+    if (!profilerActive) {
+      await locator.click({ timeout: timeoutMs, noWaitAfter: true });
+      return {
+        effectiveDelivery: "playwright",
+        profilerActive,
+        fallbackApplied: false,
+      };
+    }
+
+    return {
+      effectiveDelivery: await this.clickLocatorDom(locator, timeoutMs),
+      profilerActive,
+      fallbackApplied: true,
+    };
   }
 
   async interact(command, payload) {
@@ -683,9 +729,16 @@ class SessionServer {
       : null;
     let delivery = command;
     const runtimeWarnings = [];
+    let requestedDelivery = null;
+    let profilerActive = false;
+    let fallbackApplied = false;
 
     if (command === "click") {
-      delivery = await this.clickLocator(locator, timeoutMs);
+      requestedDelivery = normalizeClickDeliveryMode(payload.delivery);
+      const clickResult = await this.clickLocator(locator, timeoutMs, requestedDelivery);
+      delivery = clickResult.effectiveDelivery;
+      profilerActive = clickResult.profilerActive;
+      fallbackApplied = clickResult.fallbackApplied;
     } else if (command === "type") {
       await locator.focus({ timeout: timeoutMs });
       await locator.fill(String(payload.text), { timeout: timeoutMs });
@@ -701,8 +754,14 @@ class SessionServer {
     }
 
     runtimeWarnings.push("Interact actions confirm dispatch only; verify post-action UI state with follow-up commands when profiling or large rerenders are active.");
-    if (delivery === "dom-click") {
+    if (command === "click" && fallbackApplied) {
       runtimeWarnings.push("Profiler was active, so click used a DOM fallback instead of Playwright pointer input.");
+    }
+    if (command === "click" && requestedDelivery === "playwright" && profilerActive) {
+      runtimeWarnings.push("Profiler is active and click delivery was forced to Playwright pointer input.");
+    }
+    if (command === "click" && requestedDelivery === "dom" && !profilerActive) {
+      runtimeWarnings.push("Click delivery was forced to DOM dispatch even though profiler fallback was not required.");
     }
 
     return {
@@ -712,6 +771,10 @@ class SessionServer {
       action: command,
       ok: true,
       delivery,
+      requestedDelivery,
+      effectiveDelivery: delivery,
+      profilerActive,
+      fallbackApplied,
       selector,
       target,
       key: payload.key ? String(payload.key) : null,
@@ -778,6 +841,11 @@ class SessionServer {
         return this.close();
       case "tree.get":
         return this.collectTree();
+      case "tree.stats":
+        return this.page.evaluate(
+          ({ top, preferredEngine }) => window.__RDT_CLI_RUNTIME__.treeStats(top, preferredEngine),
+          { top: payload.top, preferredEngine: this.enginePreference },
+        );
       case "node.inspect":
         await this.ensureReactDetected();
         return unwrapRuntimeResult(await this.page.evaluate(
@@ -787,7 +855,9 @@ class SessionServer {
       case "node.search":
         await this.ensureReactDetected();
         return unwrapRuntimeResult(await this.page.evaluate(
-          ({ query, snapshotId, preferredEngine }) => window.__RDT_CLI_RUNTIME__.searchNodes(query, snapshotId, preferredEngine),
+          ({ query, snapshotId, preferredEngine, structured }) => {
+            return window.__RDT_CLI_RUNTIME__.searchNodes(query, snapshotId, preferredEngine, structured);
+          },
           { ...payload, preferredEngine: this.enginePreference },
         ));
       case "node.highlight":
@@ -857,10 +927,18 @@ class SessionServer {
         ));
       case "source.reveal":
         await this.ensureReactDetected();
-        return unwrapRuntimeResult(await this.page.evaluate(({ nodeId, snapshotId, commitId, preferredEngine }) => {
-          const node = window.__RDT_CLI_RUNTIME__.inspectNode(nodeId, snapshotId, commitId, preferredEngine);
-          return node ? node.source : null;
-        }, { ...payload, preferredEngine: this.enginePreference }));
+        return unwrapRuntimeResult(await this.page.evaluate(
+          ({ nodeId, snapshotId, commitId, preferredEngine, structured }) => {
+            return window.__RDT_CLI_RUNTIME__.revealSource(
+              nodeId,
+              snapshotId,
+              commitId,
+              preferredEngine,
+              structured,
+            );
+          },
+          { ...payload, preferredEngine: this.enginePreference },
+        ));
       default:
         throw new CliError(`Unsupported action: ${action}`, { code: "unsupported-action" });
     }

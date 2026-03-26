@@ -34,16 +34,18 @@ It is a maintenance aid for agents and contributors. It is not a commitment to r
 | `__REACT_DEVTOOLS_GLOBAL_HOOK__` shim | `src/runtime-script.js` | DevTools global hook | `rdt` uses the hook for renderer/root discovery, but does not speak the official frontend protocol. |
 | `state.roots` + `rootId` | `src/runtime-script.js` | Fiber roots / renderer root registry | `rdt` assigns CLI-friendly `root-*` ids per discovered root. |
 | `collectTree()` snapshot | `src/runtime-script.js` | Inspected tree payload | `rdt` serializes a tree for CLI use instead of streaming updates to a frontend. |
+| `tree stats` | `src/runtime-script.js` + `src/cli.js` | No direct public equivalent | Snapshot summary view for large trees; returns metadata without the full node dump. |
 | `snapshotId` | `src/runtime-script.js` | No direct public equivalent | Intentional divergence. This is a CLI-specific stability layer for follow-up commands. |
 | `node id` like `n68` | `src/runtime-script.js` | Element/fiber identity in inspector payloads | Snapshot-scoped only. Not intended to be globally stable across commits. |
 | `node inspect` payload | `src/runtime-script.js` | Inspected element details | Closest conceptual match to DevTools inspected element data. |
 | `ownerStack` | `src/runtime-script.js` | Owner chain / component stack | Serialized as lightweight `{id, displayName}` records. |
 | `hooks` | `src/runtime-script.js` | Hook inspection data | Derived from `memoizedState`; intentionally simpler than full DevTools hook typing. |
 | `context` | `src/runtime-script.js` | Context dependencies / inspected context values | Derived from fiber dependencies, serialized for CLI use. |
-| `source reveal` | `src/server.js` + `src/runtime-script.js` | View source / inspect source location | Depends on `_debugSource`; may legitimately return `null`. |
+| `source reveal` | `src/server.js` + `src/runtime-script.js` | View source / inspect source location | Raw mode may legitimately return `null`; structured mode reports source availability explicitly. |
 | `profiler` summary/export | `src/runtime-script.js` + `src/cli.js` | Profiler commit data | `rdt` keeps commit-oriented summaries and NDJSON export rather than full DevTools frontend state. |
 | `profiler compare` | `src/cli.js` | No direct public equivalent | CLI-side comparison of stored profiler artifacts or exported NDJSON files. |
 | `interact click|type|press|wait` | `src/server.js` | No direct public equivalent | Playwright-backed deterministic interaction helpers for agent workflows. |
+| `interact click --delivery` | `src/server.js` | No direct public equivalent | CLI-specific interaction contract for choosing Playwright pointer input vs DOM dispatch. |
 | `session doctor` | `src/server.js` + `src/runtime-script.js` | No direct public equivalent | CLI-specific preflight that reports trust boundaries, runtime readiness, Playwright resolution diagnostics, and helper import targets. |
 
 ## Intentional Divergences
@@ -72,6 +74,8 @@ It is a maintenance aid for agents and contributors. It is not a commitment to r
 - `hooks`: serialized hook state view, intentionally simplified.
 - `context`: serialized current context dependency values.
 - `source`: `_debugSource` projection when available; `null` is expected in many builds.
+- `source reveal --structured`: wraps source lookup in `{ status, available, mode, reason, source }`.
+- `mode`: source-capability mode, not engine mode. Current values describe whether `_debugSource` is available, removed by newer React runtimes, or stripped by the build.
 - `dom`: first host element descendant summary used for CLI-oriented highlight/reveal behavior.
 
 ### Profiler payload

@@ -158,12 +158,14 @@ rdt profiler export --session demo --compress
 
 - Use built-in `interact` commands before reaching for external Playwright helper scripts.
 - Current supported actions:
-  - `rdt interact click --session <name> --selector <css> [--delivery auto|playwright|dom]`
+  - `rdt interact click --session <name> (--selector <css> | --text <value> | --role <role>) [--nth <index>] [--strict] [--delivery auto|playwright|dom]`
   - `rdt interact type --session <name> --selector <css> --text <value>`
   - `rdt interact press --session <name> --key <name> [--selector <css>]`
   - `rdt interact wait --session <name> --ms <n>`
 - These commands execute through the same Playwright session that owns the current `rdt` browser page.
-- They target the first matching selector only and return structured action metadata plus trust-boundary fields.
+- `interact click` can resolve targets by CSS selector, visible text, or ARIA role.
+- `--nth` selects one match from a broader result set, and `--strict` requires exactly one match.
+- Responses now include `targetingStrategy`, `matchCount`, and `resolvedNth` alongside the delivery metadata.
 - `interact click` defaults to `--delivery auto`.
 - In `auto`, profiler-active clicks fall back to DOM dispatch and report `requestedDelivery`, `effectiveDelivery`, `profilerActive`, and `fallbackApplied`.
 - Use `--delivery playwright` to force Playwright pointer input, or `--delivery dom` to force DOM dispatch.

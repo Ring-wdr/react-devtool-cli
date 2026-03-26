@@ -222,6 +222,21 @@ function normalizeClickDeliveryMode(value) {
   });
 }
 
+function normalizeClickNth(value) {
+  if (value == null) {
+    return 0;
+  }
+
+  const numeric = Number(value);
+  if (Number.isInteger(numeric) && numeric >= 0) {
+    return numeric;
+  }
+
+  throw new CliError(`Invalid interact click nth index: ${value}`, {
+    code: "invalid-click-nth",
+  });
+}
+
 function parseServerArgv(argv) {
   const options = {};
 
@@ -697,6 +712,63 @@ class SessionServer {
     };
   }
 
+  buildClickLocator(page, payload) {
+    if (payload.selector) {
+      return {
+        locator: page.locator(String(payload.selector)),
+        targetingStrategy: "selector",
+      };
+    }
+
+    if (payload.text !== undefined) {
+      return {
+        locator: page.getByText(String(payload.text)),
+        targetingStrategy: "text",
+      };
+    }
+
+    if (payload.role) {
+      return {
+        locator: page.getByRole(String(payload.role)),
+        targetingStrategy: "role",
+      };
+    }
+
+    throw new CliError("Missing interact click target.", {
+      code: "missing-click-target",
+    });
+  }
+
+  async resolveClickTarget(page, payload, timeoutMs) {
+    const { locator, targetingStrategy } = this.buildClickLocator(page, payload);
+    await locator.first().waitFor({ state: "attached", timeout: timeoutMs });
+
+    const matchCount = await locator.count();
+    const strict = Boolean(payload.strict);
+    if (strict && matchCount !== 1) {
+      throw new CliError(
+        `Strict interact click expected exactly one match for ${targetingStrategy}, but found ${matchCount}.`,
+        { code: "interact-click-strict-mismatch" },
+      );
+    }
+
+    const resolvedNth = strict ? 0 : normalizeClickNth(payload.nth);
+    if (resolvedNth >= matchCount) {
+      throw new CliError(
+        `Interact click match index ${resolvedNth} is out of range for ${targetingStrategy} with ${matchCount} matches.`,
+        { code: "interact-click-index-out-of-range" },
+      );
+    }
+
+    return {
+      locator: locator.nth(resolvedNth),
+      targetingStrategy,
+      matchCount,
+      resolvedNth,
+      strict,
+    };
+  }
+
   async interact(command, payload) {
     const page = await this.ensureInteractivePage();
     const timeoutMs = payload.timeoutMs ? Number(payload.timeoutMs) : this.timeoutMs;
@@ -715,11 +787,26 @@ class SessionServer {
     }
 
     const selector = payload.selector ? String(payload.selector) : null;
-    const locator = selector ? page.locator(selector).first() : null;
-    if (locator) {
+    const text = payload.text !== undefined ? String(payload.text) : null;
+    const role = payload.role ? String(payload.role) : null;
+    let locator = selector ? page.locator(selector).first() : null;
+    let targetingStrategy = selector ? "selector" : null;
+    let matchCount = locator ? 1 : null;
+    let resolvedNth = null;
+    let strict = false;
+
+    if (command === "click") {
+      const clickTarget = await this.resolveClickTarget(page, payload, timeoutMs);
+      locator = clickTarget.locator;
+      targetingStrategy = clickTarget.targetingStrategy;
+      matchCount = clickTarget.matchCount;
+      resolvedNth = clickTarget.resolvedNth;
+      strict = clickTarget.strict;
+    } else if (locator) {
       await locator.waitFor({ state: "attached", timeout: timeoutMs });
     }
-    const target = selector
+
+    const target = locator
       ? await locator.evaluate((element) => ({
           tagName: element.tagName.toLowerCase(),
           id: element.id || null,
@@ -764,9 +851,13 @@ class SessionServer {
       runtimeWarnings.push("Click delivery was forced to DOM dispatch even though profiler fallback was not required.");
     }
 
+    const limitations = command === "click"
+      ? ["interact click resolves a single locator match; without --strict, broader match sets may still require caller verification"]
+      : ["selector-based interaction targets the first matching element only"];
+
     return {
       observationLevel: "observed",
-      limitations: ["selector-based interaction targets the first matching element only"],
+      limitations,
       runtimeWarnings,
       action: command,
       ok: true,
@@ -775,10 +866,16 @@ class SessionServer {
       effectiveDelivery: delivery,
       profilerActive,
       fallbackApplied,
+      targetingStrategy,
+      matchCount,
+      resolvedNth,
+      strict,
       selector,
+      textQuery: text,
+      role,
       target,
       key: payload.key ? String(payload.key) : null,
-      textLength: payload.text != null ? String(payload.text).length : null,
+      textLength: command === "type" && payload.text != null ? String(payload.text).length : null,
     };
   }
 

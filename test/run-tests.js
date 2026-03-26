@@ -138,6 +138,7 @@ run("parseArgv preserves interact click options", () => {
     ".result-row",
     "--delivery",
     "dom",
+    "--strict",
     "--timeout-ms",
     "1200",
   ]);
@@ -146,7 +147,45 @@ run("parseArgv preserves interact click options", () => {
   assert.equal(parsed.options.session, "app");
   assert.equal(parsed.options.selector, ".result-row");
   assert.equal(parsed.options.delivery, "dom");
+  assert.equal(parsed.options.strict, true);
   assert.equal(parsed.options.timeoutMs, 1200);
+});
+
+run("parseArgv preserves interact click text and nth options", () => {
+  const parsed = parseArgv([
+    "interact",
+    "click",
+    "--session",
+    "app",
+    "--text",
+    "Count is",
+    "--nth",
+    "2",
+    "--delivery",
+    "playwright",
+  ]);
+
+  assert.deepEqual(parsed.positionals, ["interact", "click"]);
+  assert.equal(parsed.options.text, "Count is");
+  assert.equal(parsed.options.nth, 2);
+  assert.equal(parsed.options.delivery, "playwright");
+});
+
+run("parseArgv preserves interact click role options", () => {
+  const parsed = parseArgv([
+    "interact",
+    "click",
+    "--session",
+    "app",
+    "--role",
+    "button",
+    "--nth",
+    "0",
+  ]);
+
+  assert.deepEqual(parsed.positionals, ["interact", "click"]);
+  assert.equal(parsed.options.role, "button");
+  assert.equal(parsed.options.nth, 0);
 });
 
 run("parseArgv preserves tree stats options", () => {

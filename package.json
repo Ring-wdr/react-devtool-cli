@@ -1,6 +1,6 @@
 {
   "name": "react-devtool-cli",
-  "version": "0.1.35-rc.2",
+  "version": "0.1.35-rc.3",
   "description": "Agent-first CLI for React component tree inspection, snapshot-aware node debugging, and profiler analysis through a Playwright-managed browser session.",
   "license": "MIT",
   "type": "module",
@@ -37,7 +37,9 @@
     "docs:dev": "vitepress dev docs",
     "docs:preview": "vitepress preview docs --port 4173",
     "prepack": "npm run build",
-    "test": "node test/run-tests.js"
+    "test": "node test/run-tests.js",
+    "test:integration": "node scripts/run-integration-harness.mjs",
+    "test:integration:verbose": "node scripts/run-integration-harness.mjs --verbose"
   },
   "engines": {
     "node": ">=22.0.0"

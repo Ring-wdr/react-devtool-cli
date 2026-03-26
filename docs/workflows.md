@@ -78,13 +78,15 @@ Use it to confirm:
 Built-in interactions keep the investigation inside the same session instead of forcing separate helper scripts.
 
 ```bash
-rdt interact click --session demo --selector 'button.save' --delivery auto
+rdt interact click --session demo --role button --nth 0 --delivery auto
 rdt interact type --session demo --selector 'input[name="query"]' --text hello
 rdt interact wait --session demo --ms 500
 ```
 
 - `interact click --delivery auto` uses Playwright pointer input by default.
 - When the profiler is active, `auto` may fall back to DOM dispatch and reports the applied delivery in the response payload.
+- Use one targeting mode per click: `--selector`, `--text`, or `--role`.
+- Add `--nth` to choose one match from a broader result set, or `--strict` to require exactly one match.
 
 After interaction, verify the app settled by collecting a fresh tree or reading profiler output instead of assuming the UI state changed correctly.
 

@@ -48,7 +48,7 @@ rdt source reveal <nodeId> --session demo --snapshot <snapshotId> --structured
 ```
 
 - `tree stats` is the lightweight summary path when `tree get --format json` is too heavy.
-- `node search --structured` keeps the default array-returning behavior opt-in while adding `matchCount` and `runtimeWarnings`.
+- `node search --structured` keeps the default array-returning behavior opt-in while adding `matchCount`, `returnedCount`, `truncated`, and `runtimeWarnings`.
 - `source reveal --structured` returns availability metadata instead of only raw `null`.
 
 Recovery flow:
@@ -79,13 +79,14 @@ Built-in interactions keep the investigation inside the same session instead of 
 
 ```bash
 rdt interact click --session demo --role button --nth 0 --delivery auto
-rdt interact type --session demo --selector 'input[name="query"]' --text hello
+rdt interact type --session demo --target-text 'Filter inventory' --text hello
 rdt interact wait --session demo --ms 500
 ```
 
 - `interact click --delivery auto` uses Playwright pointer input by default.
 - When the profiler is active, `auto` may fall back to DOM dispatch and reports the applied delivery in the response payload.
 - Use one targeting mode per click: `--selector`, `--text`, or `--role`.
+- `interact type` and targeted `interact press` accept `--selector`, `--target-text`, or `--role`.
 - Add `--nth` to choose one match from a broader result set, or `--strict` to require exactly one match.
 
 After interaction, verify the app settled by collecting a fresh tree or reading profiler output instead of assuming the UI state changed correctly.
@@ -94,7 +95,7 @@ After interaction, verify the app settled by collecting a fresh tree or reading 
 
 ```bash
 rdt profiler start --session demo
-rdt interact type --session demo --selector 'input[name="query"]' --text hello
+rdt interact type --session demo --target-text 'Filter inventory' --text hello
 rdt profiler stop --session demo
 rdt profiler summary --session demo
 rdt profiler ranked <commitId> --session demo --limit 10

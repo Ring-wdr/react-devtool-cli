@@ -1069,10 +1069,19 @@ export function runtimeBootstrap() {
     return details;
   }
 
-  function searchNodes(query, snapshotId, preferredEngine, structured) {
+  function searchNodes(query, snapshotId, preferredEngine, structured, limit) {
     const snapshot = resolveSnapshot(snapshotId, true, preferredEngine);
     if (snapshot?.__rdtError) {
       return snapshot;
+    }
+
+    const normalizedLimit = limit == null ? null : Number(limit);
+    if (limit != null && (!Number.isInteger(normalizedLimit) || normalizedLimit <= 0)) {
+      return createRuntimeError(
+        "invalid-search-limit",
+        `Invalid search limit: ${limit}. Expected a positive integer.`,
+        { limit },
+      );
     }
 
     if (!snapshot) {
@@ -1082,6 +1091,8 @@ export function runtimeBootstrap() {
             query: String(query || ""),
             snapshotId: null,
             matchCount: 0,
+            returnedCount: 0,
+            truncated: false,
             runtimeWarnings: [],
           }
         : [];
@@ -1095,9 +1106,10 @@ export function runtimeBootstrap() {
       snapshotId: snapshot.snapshotId,
       engine: snapshot.selectedEngine || buildEngineMetadata(preferredEngine).selectedEngine,
     }));
+    const returnedItems = normalizedLimit == null ? items : items.slice(0, normalizedLimit);
 
     if (!structured) {
-      return items;
+      return returnedItems;
     }
 
     const runtimeWarnings = items.length === 0
@@ -1106,12 +1118,19 @@ export function runtimeBootstrap() {
           "Do not treat a zero-match snapshot search as proof that the component is absent from the codebase.",
         ]
       : [];
+    if (normalizedLimit != null && items.length > returnedItems.length) {
+      runtimeWarnings.push(
+        `Search matched ${items.length} components; returning the first ${returnedItems.length} because --limit ${normalizedLimit} was requested.`,
+      );
+    }
 
     return {
-      items,
+      items: returnedItems,
       query: String(query || ""),
       snapshotId: snapshot.snapshotId,
       matchCount: items.length,
+      returnedCount: returnedItems.length,
+      truncated: returnedItems.length < items.length,
       runtimeWarnings,
     };
   }

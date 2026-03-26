@@ -345,6 +345,33 @@ async function main() {
     );
     ensure(Array.isArray(searchPayload.items) && searchPayload.matchCount >= 1, "node-search-structured did not return any App matches");
 
+    const limitedSearchPayload = parseJsonResult(
+      "node-search-limit",
+      await runRdt([
+        "node",
+        "search",
+        "ResultRow",
+        "--session",
+        sessionName,
+        "--snapshot",
+        statsPayload.snapshotId,
+        "--structured",
+        "--limit",
+        "5",
+        "--format",
+        "json",
+      ]),
+    );
+    ensure(Array.isArray(limitedSearchPayload.items) && limitedSearchPayload.items.length === 5, "node-search-limit did not truncate items to 5");
+    ensure(limitedSearchPayload.returnedCount === 5, "node-search-limit did not report returnedCount 5");
+    ensure(limitedSearchPayload.matchCount > limitedSearchPayload.returnedCount, "node-search-limit did not report a truncated result set");
+    ensure(limitedSearchPayload.truncated === true, "node-search-limit did not report truncated=true");
+    ensure(
+      Array.isArray(limitedSearchPayload.runtimeWarnings)
+        && limitedSearchPayload.runtimeWarnings.some((warning) => warning.includes("--limit 5")),
+      "node-search-limit did not report the limit warning",
+    );
+
     const zeroMatchPayload = parseJsonResult(
       "node-search-zero-match",
       await runRdt([
@@ -362,6 +389,21 @@ async function main() {
     );
     ensure(zeroMatchPayload.matchCount === 0, "node-search-zero-match did not return matchCount 0");
     ensure(Array.isArray(zeroMatchPayload.runtimeWarnings) && zeroMatchPayload.runtimeWarnings.length > 0, "node-search-zero-match did not return runtimeWarnings");
+
+    const invalidSearchLimitResult = await runRdt([
+      "node",
+      "search",
+      "ResultRow",
+      "--session",
+      sessionName,
+      "--structured",
+      "--limit",
+      "0",
+      "--format",
+      "json",
+    ]);
+    ensure(invalidSearchLimitResult.code !== 0, "node-search-invalid-limit unexpectedly succeeded");
+    ensure(invalidSearchLimitResult.stderr.includes("--limit"), "node-search-invalid-limit did not explain the limit failure");
     logScenarioOk("tree-stats-and-structured-search");
 
     const appNodeId = searchPayload.items[0]?.id;
@@ -488,6 +530,122 @@ async function main() {
       "profiler-stop",
       await runRdt(["profiler", "stop", "--session", sessionName, "--format", "json"]),
     );
+
+    const targetTextType = parseJsonResult(
+      "type-target-text",
+      await runRdt([
+        "interact",
+        "type",
+        "--session",
+        sessionName,
+        "--target-text",
+        "Filter inventory",
+        "--text",
+        "billing",
+        "--format",
+        "json",
+      ]),
+    );
+    ensure(targetTextType.targetingStrategy === "target-text", "type-target-text did not use target-text targeting");
+    ensure(targetTextType.targetingResolution === "label-control", "type-target-text did not resolve through label-control");
+    ensure(targetTextType.target?.tagName === "input", "type-target-text did not resolve to an input");
+    ensure(targetTextType.textLength === 7, "type-target-text did not report the expected text length");
+
+    const targetTextPress = parseJsonResult(
+      "press-target-text",
+      await runRdt([
+        "interact",
+        "press",
+        "--session",
+        sessionName,
+        "--key",
+        "Enter",
+        "--target-text",
+        "Filter inventory",
+        "--format",
+        "json",
+      ]),
+    );
+    ensure(targetTextPress.targetingStrategy === "target-text", "press-target-text did not use target-text targeting");
+    ensure(targetTextPress.targetingResolution === "label-control", "press-target-text did not resolve through label-control");
+    ensure(targetTextPress.target?.tagName === "input", "press-target-text did not resolve to an input");
+
+    const roleType = parseJsonResult(
+      "type-role-targeting",
+      await runRdt([
+        "interact",
+        "type",
+        "--session",
+        sessionName,
+        "--role",
+        "textbox",
+        "--strict",
+        "--text",
+        "analytics",
+        "--format",
+        "json",
+      ]),
+    );
+    ensure(roleType.action === "type", "type-role-targeting did not report type action");
+    ensure(roleType.targetingStrategy === "role", "type-role-targeting did not use role targeting");
+    ensure(roleType.strict === true, "type-role-targeting did not report strict=true");
+
+    const rolePress = parseJsonResult(
+      "press-role-targeting",
+      await runRdt([
+        "interact",
+        "press",
+        "--session",
+        sessionName,
+        "--key",
+        "Enter",
+        "--role",
+        "textbox",
+        "--strict",
+        "--format",
+        "json",
+      ]),
+    );
+    ensure(rolePress.action === "press", "press-role-targeting did not report press action");
+    ensure(rolePress.targetingStrategy === "role", "press-role-targeting did not use role targeting");
+    ensure(rolePress.strict === true, "press-role-targeting did not report strict=true");
+    ensure(rolePress.effectiveDelivery === "keyboard", "press-role-targeting did not use keyboard delivery");
+
+    const invalidClickResult = await runRdt([
+      "interact",
+      "click",
+      "--session",
+      sessionName,
+      "--selector",
+      "button.counter",
+      "--text",
+      "Count is",
+    ]);
+    ensure(invalidClickResult.code !== 0, "invalid-click-targeting unexpectedly succeeded");
+    ensure(invalidClickResult.stderr.includes("Use exactly one"), "invalid-click-targeting did not explain the conflicting target failure");
+
+    const invalidTypeResult = await runRdt([
+      "interact",
+      "type",
+      "--session",
+      sessionName,
+      "--text",
+      "hello",
+    ]);
+    ensure(invalidTypeResult.code !== 0, "invalid-type-targeting unexpectedly succeeded");
+    ensure(invalidTypeResult.stderr.includes("Missing type target"), "invalid-type-targeting did not explain the missing target failure");
+
+    const invalidPressResult = await runRdt([
+      "interact",
+      "press",
+      "--session",
+      sessionName,
+      "--key",
+      "Enter",
+      "--strict",
+    ]);
+    ensure(invalidPressResult.code !== 0, "invalid-press-targeting unexpectedly succeeded");
+    ensure(invalidPressResult.stderr.includes("Missing press target"), "invalid-press-targeting did not explain the missing target failure");
     logScenarioOk("click-targeting-and-delivery");
   } finally {
     await closeSession(sessionName);

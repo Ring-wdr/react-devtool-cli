@@ -96,25 +96,106 @@ function normalizeStructuredFlag(options) {
   return Boolean(options.structured);
 }
 
-function collectClickTargetingPayload(options) {
-  const targetingKeys = ["selector", "text", "role"].filter((key) => options[key] !== undefined && options[key] !== null);
-  ensure(targetingKeys.length > 0, "Missing click target. Use one of --selector, --text, or --role for `rdt interact click`.", {
-    code: "missing-click-target",
+function normalizePositiveIntegerOption(value, message, code) {
+  const numeric = Number(value);
+  ensure(Number.isInteger(numeric) && numeric > 0, message, { code });
+  return numeric;
+}
+
+function formatTargetOptions(targetKeys) {
+  return targetKeys.map((key) => `--${key.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`)}`).join(", ");
+}
+
+function collectTargetingPayload(options, config) {
+  const {
+    command,
+    targetKeys,
+    requireTarget = false,
+    missingCode,
+    conflictingCode,
+    invalidCode,
+  } = config;
+
+  const targetingKeys = targetKeys.filter((key) => options[key] !== undefined && options[key] !== null);
+  const targetOptions = formatTargetOptions(targetKeys);
+  const hasTargetingModifiers = Boolean(options.strict) || options.nth !== undefined;
+
+  if (requireTarget || hasTargetingModifiers) {
+    ensure(targetingKeys.length > 0, `Missing ${command} target. Use one of ${targetOptions} for \`rdt interact ${command}\`.`, {
+      code: missingCode,
+    });
+  }
+
+  if (targetingKeys.length === 0) {
+    return {};
+  }
+
+  ensure(targetingKeys.length === 1, `Use exactly one of ${targetOptions} for \`rdt interact ${command}\`.`, {
+    code: conflictingCode,
   });
-  ensure(targetingKeys.length === 1, "Use exactly one of --selector, --text, or --role for `rdt interact click`.", {
-    code: "conflicting-click-target",
-  });
-  ensure(!(options.strict && options.nth !== undefined), "Do not combine --strict with --nth for `rdt interact click`.", {
-    code: "invalid-click-targeting",
+  ensure(!(options.strict && options.nth !== undefined), `Do not combine --strict with --nth for \`rdt interact ${command}\`.`, {
+    code: invalidCode,
   });
 
   return {
-    selector: options.selector ? String(options.selector) : undefined,
-    text: options.text !== undefined ? String(options.text) : undefined,
-    role: options.role ? String(options.role) : undefined,
+    selector: targetKeys.includes("selector") && options.selector ? String(options.selector) : undefined,
+    text: targetKeys.includes("text") && options.text !== undefined ? String(options.text) : undefined,
+    targetText: targetKeys.includes("targetText") && options.targetText !== undefined ? String(options.targetText) : undefined,
+    role: targetKeys.includes("role") && options.role ? String(options.role) : undefined,
     nth: options.nth !== undefined ? Number(options.nth) : undefined,
     strict: Boolean(options.strict),
   };
+}
+
+function collectClickTargetingPayload(options) {
+  return collectTargetingPayload(options, {
+    command: "click",
+    targetKeys: ["selector", "text", "role"],
+    requireTarget: true,
+    missingCode: "missing-click-target",
+    conflictingCode: "conflicting-click-target",
+    invalidCode: "invalid-click-targeting",
+  });
+}
+
+function collectTypeTargetingPayload(options) {
+  return collectTargetingPayload(options, {
+    command: "type",
+    targetKeys: ["selector", "targetText", "role"],
+    requireTarget: true,
+    missingCode: "missing-type-target",
+    conflictingCode: "conflicting-type-target",
+    invalidCode: "invalid-type-targeting",
+  });
+}
+
+function collectPressTargetingPayload(options) {
+  return collectTargetingPayload(options, {
+    command: "press",
+    targetKeys: ["selector", "targetText", "role"],
+    requireTarget: false,
+    missingCode: "missing-press-target",
+    conflictingCode: "conflicting-press-target",
+    invalidCode: "invalid-press-targeting",
+  });
+}
+
+function collectNodeSearchPayload(query, options) {
+  const payload = {
+    query,
+    structured: normalizeStructuredFlag(options),
+    ...collectSnapshotPayload(options),
+  };
+
+  if (options.limit !== undefined) {
+    payload.limit = normalizePositiveIntegerOption(
+      options.limit,
+      "Invalid --limit for `rdt node search`. Expected a positive integer.",
+      "invalid-search-limit",
+    );
+  }
+
+  return payload;
 }
 
 function resolveCommitId(positionals, options, message) {
@@ -342,11 +423,7 @@ async function handleNodeCommand(command, positionals, options) {
   if (command === "search") {
     const query = positionals.join(" ");
     ensure(query, "Missing query for `rdt node search`.", { code: "missing-query" });
-    const response = await requestSession(options.session, "node.search", {
-      query,
-      structured: normalizeStructuredFlag(options),
-      ...collectSnapshotPayload(options),
-    });
+    const response = await requestSession(options.session, "node.search", collectNodeSearchPayload(query, options));
     await writeStdout(response.result, resolveFormat(options));
     return;
   }
@@ -387,10 +464,9 @@ async function handleInteractCommand(command, options) {
   }
 
   if (command === "type") {
-    ensure(options.selector, "Missing required option --selector for `rdt interact type`.", { code: "missing-selector" });
     ensure(options.text !== undefined, "Missing required option --text for `rdt interact type`.", { code: "missing-text" });
     const response = await requestSession(options.session, "interact.type", {
-      selector: String(options.selector),
+      ...collectTypeTargetingPayload(options),
       text: String(options.text),
       timeoutMs: options.timeoutMs ?? undefined,
     });
@@ -402,7 +478,7 @@ async function handleInteractCommand(command, options) {
     ensure(options.key, "Missing required option --key for `rdt interact press`.", { code: "missing-key" });
     const response = await requestSession(options.session, "interact.press", {
       key: String(options.key),
-      selector: options.selector ? String(options.selector) : undefined,
+      ...collectPressTargetingPayload(options),
       timeoutMs: options.timeoutMs ?? undefined,
     });
     await writeStdout(response.result, resolveFormat(options));
@@ -819,12 +895,12 @@ Usage:
   rdt tree get --session <name> [--format json|yaml|pretty]
   rdt tree stats --session <name> [--top <n>] [--format json|yaml|pretty]
   rdt node inspect <id> --session <name> [--snapshot <id>] [--commit <id>]
-  rdt node search <query> --session <name> [--snapshot <id>] [--structured]
+  rdt node search <query> --session <name> [--snapshot <id>] [--structured] [--limit <n>]
   rdt node highlight <id> --session <name> [--snapshot <id>]
   rdt node pick --session <name> [--timeout-ms 30000]
   rdt interact click --session <name> (--selector <css> | --text <value> | --role <role>) [--nth <index>] [--strict] [--delivery auto|playwright|dom] [--timeout-ms <ms>]
-  rdt interact type --session <name> --selector <css> --text <value> [--timeout-ms <ms>]
-  rdt interact press --session <name> --key <name> [--selector <css>] [--timeout-ms <ms>]
+  rdt interact type --session <name> (--selector <css> | --target-text <label> | --role <role>) [--nth <index>] [--strict] --text <value> [--timeout-ms <ms>]
+  rdt interact press --session <name> --key <name> [--selector <css> | --target-text <label> | --role <role>] [--nth <index>] [--strict] [--timeout-ms <ms>]
   rdt interact wait --session <name> --ms <n>
   rdt profiler start --session <name> [--profile-id <id>]
   rdt profiler stop --session <name>

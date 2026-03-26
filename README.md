@@ -159,13 +159,14 @@ rdt profiler export --session demo --compress
 - Use built-in `interact` commands before reaching for external Playwright helper scripts.
 - Current supported actions:
   - `rdt interact click --session <name> (--selector <css> | --text <value> | --role <role>) [--nth <index>] [--strict] [--delivery auto|playwright|dom]`
-  - `rdt interact type --session <name> --selector <css> --text <value>`
-  - `rdt interact press --session <name> --key <name> [--selector <css>]`
+  - `rdt interact type --session <name> (--selector <css> | --target-text <label> | --role <role>) [--nth <index>] [--strict] --text <value>`
+  - `rdt interact press --session <name> --key <name> [--selector <css> | --target-text <label> | --role <role>] [--nth <index>] [--strict]`
   - `rdt interact wait --session <name> --ms <n>`
 - These commands execute through the same Playwright session that owns the current `rdt` browser page.
 - `interact click` can resolve targets by CSS selector, visible text, or ARIA role.
+- `interact type` and targeted `interact press` can resolve controls by CSS selector, label text, or ARIA role.
 - `--nth` selects one match from a broader result set, and `--strict` requires exactly one match.
-- Responses now include `targetingStrategy`, `matchCount`, and `resolvedNth` alongside the delivery metadata.
+- Responses now include `targetingStrategy`, `targetingResolution`, `matchCount`, and `resolvedNth` alongside the delivery metadata.
 - `interact click` defaults to `--delivery auto`.
 - In `auto`, profiler-active clicks fall back to DOM dispatch and report `requestedDelivery`, `effectiveDelivery`, `profilerActive`, and `fallbackApplied`.
 - Use `--delivery playwright` to force Playwright pointer input, or `--delivery dom` to force DOM dispatch.
@@ -281,7 +282,8 @@ Use `node pick` when the agent knows the visible element but not the component n
 - `source reveal --structured` returns `status`, `available`, `mode`, `reason`, and `source` so automation can distinguish unavailable source data from a successful source payload.
 - `source reveal` without `--structured` preserves the raw legacy behavior and may return literal `null`.
 - `dom` is the first host element summary used for CLI highlight and DOM-oriented inspection.
-- `node search --structured` wraps search results in `{ items, query, snapshotId, matchCount, runtimeWarnings }`.
+- `node search --structured` wraps search results in `{ items, query, snapshotId, matchCount, returnedCount, truncated, runtimeWarnings }`.
+- `node search --limit <n>` trims the returned items to the requested count while preserving the full `matchCount`.
 - When `node search --structured` returns `matchCount: 0`, `runtimeWarnings` explains that the component may be absent from the current snapshot rather than absent from the codebase.
 - Profiler summary fields are commit-oriented CLI metrics, not the full DevTools profiler session schema.
 - `profiler summary` and exported summaries explicitly report:

@@ -96,14 +96,45 @@ function normalizeStructuredFlag(options) {
   return Boolean(options.structured);
 }
 
+function collectClickTargetingPayload(options) {
+  const targetingKeys = ["selector", "text", "role"].filter((key) => options[key] !== undefined && options[key] !== null);
+  ensure(targetingKeys.length > 0, "Missing click target. Use one of --selector, --text, or --role for `rdt interact click`.", {
+    code: "missing-click-target",
+  });
+  ensure(targetingKeys.length === 1, "Use exactly one of --selector, --text, or --role for `rdt interact click`.", {
+    code: "conflicting-click-target",
+  });
+  ensure(!(options.strict && options.nth !== undefined), "Do not combine --strict with --nth for `rdt interact click`.", {
+    code: "invalid-click-targeting",
+  });
+
+  return {
+    selector: options.selector ? String(options.selector) : undefined,
+    text: options.text !== undefined ? String(options.text) : undefined,
+    role: options.role ? String(options.role) : undefined,
+    nth: options.nth !== undefined ? Number(options.nth) : undefined,
+    strict: Boolean(options.strict),
+  };
+}
+
 function resolveCommitId(positionals, options, message) {
   const commitId = positionals[0] ? String(positionals[0]) : (options.commit ? String(options.commit) : null);
   ensure(commitId, message, { code: "missing-commit-id" });
   return commitId;
 }
 
-function writeStdout(value, format) {
-  process.stdout.write(formatOutput(value, format));
+async function writeStdout(value, format) {
+  const output = formatOutput(value, format);
+  await new Promise((resolve, reject) => {
+    process.stdout.write(output, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
 }
 
 function isMissingProcessMessage(message) {
@@ -222,21 +253,21 @@ async function handleSessionCommand(command, options) {
   if (command === "status") {
     ensure(options.session, "Missing required option --session", { code: "missing-session" });
     const response = await requestSession(options.session, "session.status");
-    writeStdout(response.result, resolveFormat(options));
+    await writeStdout(response.result, resolveFormat(options));
     return;
   }
 
   if (command === "doctor") {
     ensure(options.session, "Missing required option --session", { code: "missing-session" });
     const response = await requestSession(options.session, "session.doctor");
-    writeStdout(response.result, resolveFormat(options));
+    await writeStdout(response.result, resolveFormat(options));
     return;
   }
 
   if (command === "close") {
     ensure(options.session, "Missing required option --session", { code: "missing-session" });
     const result = await closeSessionWithFallback(String(options.session));
-    writeStdout(result, resolveFormat(options));
+    await writeStdout(result, resolveFormat(options));
     return;
   }
 
@@ -250,7 +281,7 @@ async function handleSessionCommand(command, options) {
       url: options.url,
     });
     const status = await waitForSessionReady(sessionName);
-    writeStdout(status, resolveFormat(options));
+    await writeStdout(status, resolveFormat(options));
     return;
   }
 
@@ -262,7 +293,7 @@ async function handleSessionCommand(command, options) {
       wsEndpoint: options.wsEndpoint,
     });
     const status = await waitForSessionReady(sessionName);
-    writeStdout(status, resolveFormat(options));
+    await writeStdout(status, resolveFormat(options));
     return;
   }
 
@@ -274,7 +305,7 @@ async function handleSessionCommand(command, options) {
       cdpUrl: options.cdpUrl,
     });
     const status = await waitForSessionReady(sessionName);
-    writeStdout(status, resolveFormat(options));
+    await writeStdout(status, resolveFormat(options));
     return;
   }
 
@@ -290,7 +321,7 @@ async function handleTreeCommand(command, options) {
   const response = await requestSession(options.session, action, {
     top: options.top ? Number(options.top) : undefined,
   });
-  writeStdout(response.result, resolveFormat(options));
+  await writeStdout(response.result, resolveFormat(options));
 }
 
 async function handleNodeCommand(command, positionals, options) {
@@ -304,7 +335,7 @@ async function handleNodeCommand(command, positionals, options) {
       commitId: options.commit ? String(options.commit) : undefined,
       ...collectSnapshotPayload(options),
     });
-    writeStdout(response.result, resolveFormat(options));
+    await writeStdout(response.result, resolveFormat(options));
     return;
   }
 
@@ -316,7 +347,7 @@ async function handleNodeCommand(command, positionals, options) {
       structured: normalizeStructuredFlag(options),
       ...collectSnapshotPayload(options),
     });
-    writeStdout(response.result, resolveFormat(options));
+    await writeStdout(response.result, resolveFormat(options));
     return;
   }
 
@@ -327,7 +358,7 @@ async function handleNodeCommand(command, positionals, options) {
       nodeId,
       ...collectSnapshotPayload(options),
     });
-    writeStdout(response.result, resolveFormat(options));
+    await writeStdout(response.result, resolveFormat(options));
     return;
   }
 
@@ -335,7 +366,7 @@ async function handleNodeCommand(command, positionals, options) {
     const response = await requestSession(options.session, "node.pick", {
       timeoutMs: options.timeoutMs ?? 30000,
     });
-    writeStdout(response.result, resolveFormat(options));
+    await writeStdout(response.result, resolveFormat(options));
     return;
   }
 
@@ -346,13 +377,12 @@ async function handleInteractCommand(command, options) {
   ensure(options.session, "Missing required option --session", { code: "missing-session" });
 
   if (command === "click") {
-    ensure(options.selector, "Missing required option --selector for `rdt interact click`.", { code: "missing-selector" });
     const response = await requestSession(options.session, "interact.click", {
-      selector: String(options.selector),
+      ...collectClickTargetingPayload(options),
       delivery: options.delivery ? String(options.delivery) : undefined,
       timeoutMs: options.timeoutMs ?? undefined,
     });
-    writeStdout(response.result, resolveFormat(options));
+    await writeStdout(response.result, resolveFormat(options));
     return;
   }
 
@@ -364,7 +394,7 @@ async function handleInteractCommand(command, options) {
       text: String(options.text),
       timeoutMs: options.timeoutMs ?? undefined,
     });
-    writeStdout(response.result, resolveFormat(options));
+    await writeStdout(response.result, resolveFormat(options));
     return;
   }
 
@@ -375,7 +405,7 @@ async function handleInteractCommand(command, options) {
       selector: options.selector ? String(options.selector) : undefined,
       timeoutMs: options.timeoutMs ?? undefined,
     });
-    writeStdout(response.result, resolveFormat(options));
+    await writeStdout(response.result, resolveFormat(options));
     return;
   }
 
@@ -384,7 +414,7 @@ async function handleInteractCommand(command, options) {
     const response = await requestSession(options.session, "interact.wait", {
       ms: Number(options.ms),
     });
-    writeStdout(response.result, resolveFormat(options));
+    await writeStdout(response.result, resolveFormat(options));
     return;
   }
 
@@ -658,32 +688,32 @@ async function handleProfilerCommand(command, positionals, options) {
   if (command === "start") {
     const profileId = options.profileId ? String(options.profileId) : `profile-${Date.now().toString(36)}`;
     const response = await requestSession(options.session, "profiler.start", { profileId });
-    writeStdout(response.result, resolveFormat(options));
+    await writeStdout(response.result, resolveFormat(options));
     return;
   }
 
   if (command === "stop") {
     const response = await requestSession(options.session, "profiler.stop");
-    writeStdout(response.result, resolveFormat(options));
+    await writeStdout(response.result, resolveFormat(options));
     return;
   }
 
   if (command === "summary") {
     const response = await requestSession(options.session, "profiler.summary");
-    writeStdout(response.result, resolveFormat(options));
+    await writeStdout(response.result, resolveFormat(options));
     return;
   }
 
   if (command === "commits") {
     const response = await requestSession(options.session, "profiler.commits");
-    writeStdout(response.result, resolveFormat(options));
+    await writeStdout(response.result, resolveFormat(options));
     return;
   }
 
   if (command === "commit") {
     const commitId = resolveCommitId(positionals, options, "Missing required option --commit for `rdt profiler commit`.");
     const response = await requestSession(options.session, "profiler.commit", { commitId });
-    writeStdout(response.result, resolveFormat(options));
+    await writeStdout(response.result, resolveFormat(options));
     return;
   }
 
@@ -693,7 +723,7 @@ async function handleProfilerCommand(command, positionals, options) {
       commitId,
       limit: options.limit ? Number(options.limit) : undefined,
     });
-    writeStdout(response.result, resolveFormat(options));
+    await writeStdout(response.result, resolveFormat(options));
     return;
   }
 
@@ -706,7 +736,7 @@ async function handleProfilerCommand(command, positionals, options) {
       });
     }
     const response = await requestSession(options.session, "profiler.flamegraph", { commitId });
-    writeStdout(response.result, format);
+    await writeStdout(response.result, format);
     return;
   }
 
@@ -715,7 +745,7 @@ async function handleProfilerCommand(command, positionals, options) {
     ensure(options.right, "Missing required option --right for `rdt profiler compare`.", { code: "missing-right-profile" });
     const left = await loadProfilerArtifact(options.session, String(options.left));
     const right = await loadProfilerArtifact(options.session, String(options.right));
-    writeStdout(compareProfiles(left, right), resolveFormat(options));
+    await writeStdout(compareProfiles(left, right), resolveFormat(options));
     return;
   }
 
@@ -729,7 +759,7 @@ async function handleProfilerCommand(command, positionals, options) {
 
     const response = await requestSession(options.session, "profiler.export");
     const result = await writeProfilerExport(options.session, response.result, options);
-    writeStdout(result, format === "pretty" ? "pretty" : "json");
+    await writeStdout(result, format === "pretty" ? "pretty" : "json");
     return;
   }
 
@@ -746,7 +776,7 @@ async function handleSourceCommand(command, positionals, options) {
     structured: normalizeStructuredFlag(options),
     ...collectSnapshotPayload(options),
   });
-  writeStdout(response.result, resolveFormat(options));
+  await writeStdout(response.result, resolveFormat(options));
 }
 
 export function normalizeCliPositionals(positionals) {
@@ -792,7 +822,7 @@ Usage:
   rdt node search <query> --session <name> [--snapshot <id>] [--structured]
   rdt node highlight <id> --session <name> [--snapshot <id>]
   rdt node pick --session <name> [--timeout-ms 30000]
-  rdt interact click --session <name> --selector <css> [--delivery auto|playwright|dom] [--timeout-ms <ms>]
+  rdt interact click --session <name> (--selector <css> | --text <value> | --role <role>) [--nth <index>] [--strict] [--delivery auto|playwright|dom] [--timeout-ms <ms>]
   rdt interact type --session <name> --selector <css> --text <value> [--timeout-ms <ms>]
   rdt interact press --session <name> --key <name> [--selector <css>] [--timeout-ms <ms>]
   rdt interact wait --session <name> --ms <n>

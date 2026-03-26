@@ -11,6 +11,7 @@
 - Run repository commands from the repo root.
 - Prefer `node bin/rdt.js ...` over a globally installed `rdt`.
 - Use `npm test` as the default regression check.
+- Use `npm run test:integration` for the minimal browser-backed harness.
 - Use `npm run build` before packaging checks.
 
 ## Browser Validation Target
@@ -20,13 +21,13 @@
 
 ```bash
 cd test-app
-npm run dev -- --host 127.0.0.1 --port 3000
+npm run dev -- --host 127.0.0.1 --port 4310
 ```
 
 - Open a local inspection session from the repo root with:
 
 ```bash
-node bin/rdt.js session open --url http://127.0.0.1:3000 --session app --timeout 10000
+node bin/rdt.js session open --url http://127.0.0.1:4310 --session app --timeout 10000
 ```
 
 - Advanced session open options:
@@ -78,9 +79,25 @@ Default timeout is 30 seconds. Returns the picked node details.
 ### Interaction
 
 - Prefer built-in `interact click`, `interact type`, `interact press`, and `interact wait`.
-- Keep selectors deterministic and CSS-based.
+- `interact click` can target by `--selector`, `--text`, or `--role`.
+- Use `--nth` for broader match sets, or `--strict` when exactly one match is expected.
 - Run `session doctor` first to confirm `supportsBuiltInInteract`.
 - All interact commands accept optional `--timeout-ms <ms>` for element location timeout.
+
+### Minimal integration harness
+
+- Run the repo-owned browser harness with:
+
+```bash
+npm run test:integration
+```
+
+- The harness intentionally avoids port `3000`.
+- It currently validates:
+  - `session open --format json` stdout integrity
+  - `tree stats` plus structured search output
+  - structured source reveal availability reporting
+  - click targeting and delivery behavior
 
 ### Profiler
 

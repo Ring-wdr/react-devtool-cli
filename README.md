@@ -165,7 +165,9 @@ rdt profiler export --session demo --compress
 - These commands execute through the same Playwright session that owns the current `rdt` browser page.
 - `interact click` can resolve targets by CSS selector, visible text, or ARIA role.
 - `interact type` and targeted `interact press` can resolve controls by CSS selector, label text, or ARIA role.
+- `interact press` without a target remains a page-level keyboard action for compatibility; use a target when focus ambiguity would make the result nondeterministic.
 - `--nth` selects one match from a broader result set, and `--strict` requires exactly one match.
+- For `interact type` and targeted `interact press`, `--strict` and `--nth` only make sense when one of `--selector`, `--target-text`, or `--role` is present.
 - Responses now include `targetingStrategy`, `targetingResolution`, `matchCount`, and `resolvedNth` alongside the delivery metadata.
 - `interact click` defaults to `--delivery auto`.
 - In `auto`, profiler-active clicks fall back to DOM dispatch and report `requestedDelivery`, `effectiveDelivery`, `profilerActive`, and `fallbackApplied`.

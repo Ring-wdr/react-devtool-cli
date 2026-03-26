@@ -913,6 +913,10 @@ Usage:
   rdt profiler export --session <name> [--output file.jsonl] [--compress]
   rdt source reveal <id> --session <name> [--snapshot <id>] [--structured]
 
+Interaction notes:
+  - interact press without --selector/--target-text/--role sends a page-level keyboard press to the active browser focus
+  - --strict and --nth require an explicit target for interact type/press
+
 Snapshot behavior:
   - tree get returns snapshotId
   - node ids are scoped to that snapshot

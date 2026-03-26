@@ -838,6 +838,7 @@ class SessionServer {
     let resolvedNth = resolvedTarget.resolvedNth;
     let strict = resolvedTarget.strict;
 
+    const targetedAction = Boolean(locator);
     const target = locator
       ? await locator.evaluate((element) => ({
           tagName: element.tagName.toLowerCase(),
@@ -882,10 +883,15 @@ class SessionServer {
     if (command === "click" && requestedDelivery === "dom" && !profilerActive) {
       runtimeWarnings.push("Click delivery was forced to DOM dispatch even though profiler fallback was not required.");
     }
+    if (command === "press" && !targetedAction) {
+      runtimeWarnings.push("Untargeted press dispatches to the active page keyboard focus; supply --selector, --target-text, or --role when element targeting matters.");
+    }
 
     const limitations = command === "click"
       ? ["interact click resolves a single locator match; without --strict, broader match sets may still require caller verification"]
-      : ["selector-based interaction targets the first matching element only"];
+      : targetedAction
+        ? ["interact type/press resolves a single locator match; without --strict, broader match sets may still require caller verification"]
+        : ["untargeted press uses the page keyboard directly and depends on the current browser focus state"];
 
     return {
       observationLevel: "observed",

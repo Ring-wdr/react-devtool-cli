@@ -611,6 +611,28 @@ async function main() {
     ensure(rolePress.strict === true, "press-role-targeting did not report strict=true");
     ensure(rolePress.effectiveDelivery === "keyboard", "press-role-targeting did not use keyboard delivery");
 
+    const untargetedPress = parseJsonResult(
+      "press-page-keyboard",
+      await runRdt([
+        "interact",
+        "press",
+        "--session",
+        sessionName,
+        "--key",
+        "Escape",
+        "--format",
+        "json",
+      ]),
+    );
+    ensure(untargetedPress.action === "press", "press-page-keyboard did not report press action");
+    ensure(untargetedPress.targetingStrategy === null, "press-page-keyboard unexpectedly reported a targetingStrategy");
+    ensure(untargetedPress.target === null, "press-page-keyboard unexpectedly resolved a target");
+    ensure(
+      Array.isArray(untargetedPress.runtimeWarnings)
+        && untargetedPress.runtimeWarnings.some((warning) => warning.includes("active page keyboard focus")),
+      "press-page-keyboard did not warn about page-level keyboard focus",
+    );
+
     const invalidClickResult = await runRdt([
       "interact",
       "click",
@@ -646,6 +668,19 @@ async function main() {
     ]);
     ensure(invalidPressResult.code !== 0, "invalid-press-targeting unexpectedly succeeded");
     ensure(invalidPressResult.stderr.includes("Missing press target"), "invalid-press-targeting did not explain the missing target failure");
+
+    const invalidPressNthResult = await runRdt([
+      "interact",
+      "press",
+      "--session",
+      sessionName,
+      "--key",
+      "Enter",
+      "--nth",
+      "0",
+    ]);
+    ensure(invalidPressNthResult.code !== 0, "invalid-press-nth-targeting unexpectedly succeeded");
+    ensure(invalidPressNthResult.stderr.includes("Missing press target"), "invalid-press-nth-targeting did not explain the missing target failure");
     logScenarioOk("click-targeting-and-delivery");
   } finally {
     await closeSession(sessionName);

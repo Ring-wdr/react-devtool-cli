@@ -87,7 +87,9 @@ rdt interact wait --session demo --ms 500
 - When the profiler is active, `auto` may fall back to DOM dispatch and reports the applied delivery in the response payload.
 - Use one targeting mode per click: `--selector`, `--text`, or `--role`.
 - `interact type` and targeted `interact press` accept `--selector`, `--target-text`, or `--role`.
+- `interact press --key <name>` without a target remains a page-level keyboard action and depends on the browser's current focus state.
 - Add `--nth` to choose one match from a broader result set, or `--strict` to require exactly one match.
+- For `interact type` and targeted `interact press`, `--strict` and `--nth` require an explicit target.
 
 After interaction, verify the app settled by collecting a fresh tree or reading profiler output instead of assuming the UI state changed correctly.
 
